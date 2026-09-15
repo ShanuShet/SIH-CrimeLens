@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CrimeLens | Secure Investigation Platform</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+</head>
+<body>
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">CL</div>
+        <div><b>CRIME LENS</b><span>SECURE INVESTIGATION PLATFORM</span></div>
+      </div>
+      <div class="login-title">Investigator Sign In</div>
+      <p class="muted">Authenticated access is required for evidence, graph and security operations.</p>
+      <form id="loginForm">
+        <label>Username<input id="loginUsername" autocomplete="username" placeholder="admin@crimelens.local" required></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••••" required></label>
+        <button class="primary wide" type="submit">SECURE SIGN IN</button>
+      </form>
+      <div id="loginError" class="login-error"></div>
+      <div class="demo-credentials">
+        <b>Demo access</b>
+        <span>Admin: admin@crimelens.local / Admin@12345</span>
+        <span>Investigator: investigator@crimelens.local / Invest@12345</span>
+        <span>Auditor: auditor@crimelens.local / Audit@12345</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-shell hidden" id="appShell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">CL</div>
+        <div><b>CRIME LENS</b><span>SECURE INVESTIGATION</span></div>
+      </div>
+
+      <div class="sidebar-scroll">
+        <div class="workspace-label">CASE WORKSPACE</div>
+        <button id="newCaseButton" class="new-case-button"><span>＋</span> New Case</button>
+
+        <div class="sidebar-group">
+          <button class="sidebar-group-title dropdown-toggle" data-target="casesDropdown">
+            <span>CASES</span><span class="chevron">⌄</span>
+          </button>
+          <div id="casesDropdown" class="sidebar-group-content open">
+            <div id="sidebarCases" class="sidebar-list"></div>
+          </div>
+        </div>
+
+        <div class="sidebar-group">
+          <button class="sidebar-group-title dropdown-toggle" data-target="evidenceDropdown">
+            <span>EVIDENCE</span><span class="chevron">⌄</span>
+          </button>
+          <div id="evidenceDropdown" class="sidebar-group-content open">
+            <button class="sidebar-link" data-section="evidence">Evidence Register</button>
+            <button class="sidebar-link" data-section="evidence">Ingest Evidence</button>
+          </div>
+        </div>
+
+        <div class="sidebar-group">
+          <button class="sidebar-group-title dropdown-toggle" data-target="recordsDropdown">
+            <span>RECORDS</span><span class="chevron">⌄</span>
+          </button>
+          <div id="recordsDropdown" class="sidebar-group-content">
+            <button class="sidebar-link" data-section="graph">Entity Records</button>
+            <button class="sidebar-link" data-section="graph">Relationship Records</button>
+          </div>
+        </div>
+
+        <div class="workspace-label investigation-label">INVESTIGATION</div>
+        <nav class="main-nav">
+          <button class="nav active" data-section="overview">◈ <span>Overview</span></button>
+          <button class="nav" data-section="evidence">▣ <span>Evidence</span></button>
+          <button class="nav" data-section="graph">⌘ <span>Entity Graph</span></button>
+          <button class="nav" data-section="assistant">✦ <span>Intelligence Assistant</span></button>
+          <button class="nav" data-section="security">◉ <span>Security Center</span></button>
+          <button class="nav" data-section="ledger">⛓ <span>Evidence Ledger</span></button>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="user-mini">
+          <div class="avatar" id="userAvatar">A</div>
+          <div><b id="currentUser">—</b><span id="currentRole">—</span></div>
+        </div>
+        <div class="system"><span class="dot"></span> SYSTEM PROTECTED</div>
+        <button class="logout" id="logoutButton">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header>
+        <div class="header-copy">
+          <div class="eyebrow">PROJECT CRIME LENS / SECURE COMMAND CENTER</div>
+          <h1>Investigative Intelligence Platform</h1>
+          <p>Evidence ingestion, entity intelligence, graph analysis, security monitoring and tamper-evident audit.</p>
+        </div>
+        <div class="header-right">
+          <div class="security-pill"><span class="status-dot"></span> SECURE SESSION</div>
+          <div class="clock" id="clock"></div>
+        </div>
+      </header>
+
+      <section id="overview" class="section">
+        <div class="page-heading">
+          <div><h2>Investigation Overview</h2><p class="muted">Live view of the current evidence universe.</p></div>
+          <button class="secondary" id="refreshOverviewButton">↻ Refresh intelligence</button>
+        </div>
+        <div class="cards">
+          <div class="kpi"><span>TOTAL CASES</span><strong id="totalCases">—</strong><small>Active case universe</small></div>
+          <div class="kpi"><span>EVIDENCE FILES</span><strong id="evidenceDocuments">—</strong><small>Ingested artifacts</small></div>
+          <div class="kpi"><span>ENTITIES</span><strong id="entityTotal">—</strong><small>Resolved entities</small></div>
+          <div class="kpi"><span>RELATIONSHIPS</span><strong id="activeLeads">—</strong><small>Graph connections</small></div>
+          <div class="kpi danger-kpi"><span>HIGH-RISK ENTITIES</span><strong id="highRisk">—</strong><small>Risk score ≥ 70</small></div>
+        </div>
+        <div class="security-strip">
+          <div><span class="strip-label">EVIDENCE INTEGRITY</span><b id="integrityStatus">Checking…</b></div>
+          <div><span class="strip-label">LEDGER</span><b id="ledgerStatus">Checking…</b></div>
+          <div><span class="strip-label">FAILED LOGINS</span><b id="failedLogins">0</b></div>
+          <div><span class="strip-label">ROLE</span><b id="roleValue">—</b></div>
+        </div>
+        <div class="grid2">
+          <div class="panel">
+            <div class="panel-title"><b>CASE PORTFOLIO</b><span>LIVE</span></div>
+            <div id="cases" class="case-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title"><b>INVESTIGATION PIPELINE</b><span>CONTROL FLOW</span></div>
+            <div class="flow">
+              <div><i>01</i><b>COLLECT</b><small>Evidence</small></div><div class="arrow">→</div>
+              <div><i>02</i><b>PREPARE</b><small>Parse / OCR</small></div><div class="arrow">→</div>
+              <div><i>03</i><b>EXTRACT</b><small>Entity / relation</small></div><div class="arrow">→</div>
+              <div><i>04</i><b>CONNECT</b><small>Evidence graph</small></div>
+            </div>
+            <div class="overview-note"><b>Security layer</b><span>Every evidence upload is SHA-256 fingerprinted and every security-sensitive action is recorded in a hash-linked audit ledger.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="evidence" class="section hidden">
+        <div class="page-heading"><div><h2>Evidence Operations</h2><p class="muted">Upload, classify, fingerprint and verify authorized investigative artifacts.</p></div></div>
+        <div class="panel">
+          <div class="ingest-banner">
+            <div><b>STRUCTURED</b><span>CSV · XLSX · XLS · JSON</span></div>
+            <div><b>UNSTRUCTURED</b><span>PDF · DOCX · TXT · JPG · PNG</span></div>
+            <div><b>SECURITY</b><span>SHA-256 · size limit · audit</span></div>
+          </div>
+          <div class="upload-controls">
+            <label>Evidence category
+              <select id="docType">
+                <option value="AUTO">Auto detect</option><option value="ENTITY_MASTER">Entity Master</option>
+                <option value="FIR">FIR / Police Report</option><option value="SURVEILLANCE">Surveillance Report</option>
+                <option value="CRIMINAL_RECORD">Criminal Record</option><option value="CDR">Call Detail Record</option>
+                <option value="FINANCIAL">Financial Transaction Log</option><option value="OTHER">Other Evidence</option>
+              </select>
+            </label>
+            <label class="file-picker">Choose evidence files
+              <input type="file" id="evidenceFiles" multiple accept=".pdf,.docx,.txt,.csv,.xlsx,.xls,.json,.jpg,.jpeg,.png">
+            </label>
+            <button class="primary" id="uploadEvidenceButton">INGEST EVIDENCE</button>
+          </div>
+          <div id="uploadResult" class="result">No files ingested in this session.</div>
+          <div class="panel-title sub"><b>EVIDENCE REGISTER</b><span>LAST 50</span></div>
+          <div id="documentList" class="document-list">Loading…</div>
+        </div>
+      </section>
+
+      <section id="graph" class="section hidden">
+        <div class="page-heading">
+          <div><h2>Entity Relationship Graph</h2><p class="muted">Explore evidence-backed connections across people, phones, accounts, vehicles and locations.</p></div>
+          <div class="button-row"><button class="secondary" id="resetGraphButton">Reset graph</button><button class="secondary" id="fitGraphButton">Fit</button></div>
+        </div>
+        <div class="graph-layout">
+          <aside class="entity-sidebar">
+            <div class="entity-header"><b>EVIDENCE ENTITIES</b><span id="entityCount">0</span></div>
+            <input id="entitySearch" class="entity-search" placeholder="Search entities…">
+            <div class="entity-filters">
+              <button class="entity-filter active" data-type="ALL">ALL</button>
+              <button class="entity-filter" data-type="Person">👤</button>
+              <button class="entity-filter" data-type="PhoneNumber">📞</button>
+              <button class="entity-filter" data-type="BankAccount">🏦</button>
+              <button class="entity-filter" data-type="Vehicle">🚗</button>
+              <button class="entity-filter" data-type="Location">📍</button>
+              <button class="entity-filter" data-type="Incident">🚨</button>
+            </div>
+            <div id="entityList" class="entity-list"></div>
+          </aside>
+          <div class="graph-content">
+            <div class="graph-tools"><input id="graphSearch" placeholder="Search graph…"><span class="graph-hint">Click a node or relationship for details</span></div>
+            <div id="cy"></div>
+            <div id="entityInfo" class="entity-info"><div class="panel-title"><b>ENTITY INFORMATION</b><span>SELECT A NODE</span></div><p class="muted">Select an entity to inspect its identity and available connections.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="assistant" class="section hidden">
+        <div class="page-heading"><div><h2>Investigation Assistant</h2><p class="muted">Ask evidence-grounded questions about the current graph.</p></div><span class="mode-badge">LOCAL GRAPH + OPTIONAL LLM</span></div>
+        <div class="panel assistant-panel">
+          <div class="suggestions">
+            <button data-question="Find entities connected to ACC1001">Account links</button>
+            <button data-question="Show communication links between phone numbers">Communication links</button>
+            <button data-question="Show the most connected entities">Top entities</button>
+            <button data-question="Show entities connected to the current incident">Incident links</button>
+            <button data-question="Who is connected to Rahul Mehta?">Rahul connections</button>
+          </div>
+          <div id="chatLog" class="chatlog"><div class="bot"><b>CrimeLens:</b><div class="assistant-answer">Ask a question about the current evidence graph. Answers are constrained to the evidence currently stored by the platform.</div></div></div>
+          <div class="chat-input"><input id="question" placeholder="Ask an investigative question…"><button class="primary" id="askButton">ANALYZE</button></div>
+        </div>
+      </section>
+
+      <section id="security" class="section hidden">
+        <div class="page-heading"><div><h2>Security Center</h2><p class="muted">Authentication, integrity, audit and security-event monitoring.</p></div><button class="secondary" id="refreshSecurityButton">↻ Refresh security</button></div>
+        <div class="security-cards">
+          <div class="security-card"><span>AUTHENTICATION</span><b>HMAC SESSION</b><small>Signed HttpOnly session cookie</small></div>
+          <div class="security-card"><span>PASSWORDS</span><b>SCRYPT</b><small>Salted password hashing</small></div>
+          <div class="security-card"><span>EVIDENCE</span><b id="securityIntegrity">—</b><small>SHA-256 verification</small></div>
+          <div class="security-card"><span>LEDGER</span><b id="securityLedger">—</b><small>Tamper-evident chain</small></div>
+        </div>
+        <div class="grid2">
+          <div class="panel"><div class="panel-title"><b>SECURITY EVENTS</b><span>LAST 100</span></div><div id="securityEvents" class="table-wrap"></div></div>
+          <div class="panel"><div class="panel-title"><b>AUDIT TRAIL</b><span>LAST 100</span></div><div id="auditEvents" class="table-wrap"></div></div>
+        </div>
+      </section>
+
+      <section id="ledger" class="section hidden">
+        <div class="page-heading"><div><h2>Evidence Integrity Ledger</h2><p class="muted">A local, permissioned-style hash chain for tamper-evident auditability.</p></div><button class="primary" id="verifyLedgerButton">VERIFY LEDGER</button></div>
+        <div id="ledgerVerifyResult" class="verify-result hidden"></div>
+        <div class="ledger-explainer"><div class="chain-icon">⛓</div><div><b>How it works</b><span>Each audit event becomes a block containing its payload, the previous block hash and a new SHA-256 block hash. This prototype demonstrates blockchain concepts without pretending to be a distributed public blockchain.</span></div></div>
+        <div class="panel"><div class="panel-title"><b>HASH-CHAIN BLOCKS</b><span id="ledgerCount">0 BLOCKS</span></div><div id="ledgerList" class="ledger-list"></div></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="newCaseModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><div><h3>Create New Case</h3><p class="muted">Create a case workspace for authorized investigation.</p></div><button class="icon-button" id="closeNewCaseButton">×</button></div>
+      <form id="newCaseForm">
+        <label>Case name<input id="newCaseName" required maxlength="255" placeholder="e.g. Operation North Star"></label>
+        <label>Reference ID<input id="newCaseId" maxlength="120" placeholder="e.g. CL-002"></label>
+        <div class="form-grid">
+          <label>Risk<select id="newCaseRisk"><option>Low</option><option selected>Medium</option><option>High</option></select></label>
+          <label>Status<select id="newCaseStatus"><option selected>Pending</option><option>Open</option><option>Solved</option><option>Closed</option></select></label>
+        </div>
+        <label>Description<textarea id="newCaseDescription" rows="4" maxlength="5000" placeholder="Brief case description"></textarea></label>
+        <div id="newCaseError" class="form-error"></div>
+        <div class="modal-actions"><button type="button" class="secondary" id="cancelNewCaseButton">Cancel</button><button type="submit" class="primary">CREATE CASE</button></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
