@@ -1,0 +1,36 @@
+{
+  "case_id": "CL-003",
+  "synthetic": true,
+  "evidence": [
+    {
+      "evidence_id": "E3001",
+      "type": "vehicle",
+      "entity_id": "V003",
+      "description": "Motorcycle reported missing from apartment parking."
+    },
+    {
+      "evidence_id": "E3002",
+      "type": "phone",
+      "entity_id": "DEV004",
+      "description": "Synthetic device associated with P004."
+    },
+    {
+      "evidence_id": "E3003",
+      "type": "helmet",
+      "entity_id": "ITEM003",
+      "description": "Helmet listed with V003."
+    },
+    {
+      "evidence_id": "E3004",
+      "type": "payment",
+      "entity_id": "TX3001",
+      "description": "Synthetic transfer before incident."
+    },
+    {
+      "evidence_id": "E3005",
+      "type": "location",
+      "entity_id": "LOC004",
+      "description": "Service-road camera point."
+    }
+  ]
+}

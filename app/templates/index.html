@@ -40,7 +40,7 @@
 
       <div class="sidebar-scroll">
         <div class="workspace-label">CASE WORKSPACE</div>
-        <button id="newCaseButton" class="new-case-button"><span>＋</span> New Case</button>
+        <button id="newCaseButton" class="new-case-button" data-permission="case:create"><span>＋</span> New Case</button>
 
         <div class="sidebar-group">
           <button class="sidebar-group-title dropdown-toggle" data-target="casesDropdown">
@@ -56,8 +56,8 @@
             <span>EVIDENCE</span><span class="chevron">⌄</span>
           </button>
           <div id="evidenceDropdown" class="sidebar-group-content open">
-            <button class="sidebar-link" data-section="evidence">Evidence Register</button>
-            <button class="sidebar-link" data-section="evidence">Ingest Evidence</button>
+            <button class="sidebar-link" data-section="evidence" data-permission="evidence:view">Evidence Register</button>
+            <button class="sidebar-link" data-section="evidence" data-permission="evidence:ingest">Ingest Evidence</button>
           </div>
         </div>
 
@@ -66,19 +66,19 @@
             <span>RECORDS</span><span class="chevron">⌄</span>
           </button>
           <div id="recordsDropdown" class="sidebar-group-content">
-            <button class="sidebar-link" data-section="graph">Entity Records</button>
-            <button class="sidebar-link" data-section="graph">Relationship Records</button>
+            <button class="sidebar-link" data-section="graph" data-permission="graph:view">Entity Records</button>
+            <button class="sidebar-link" data-section="graph" data-permission="graph:view">Relationship Records</button>
           </div>
         </div>
 
         <div class="workspace-label investigation-label">INVESTIGATION</div>
         <nav class="main-nav">
           <button class="nav active" data-section="overview">◈ <span>Overview</span></button>
-          <button class="nav" data-section="evidence">▣ <span>Evidence</span></button>
-          <button class="nav" data-section="graph">⌘ <span>Entity Graph</span></button>
-          <button class="nav" data-section="assistant">✦ <span>Intelligence Assistant</span></button>
-          <button class="nav" data-section="security">◉ <span>Security Center</span></button>
-          <button class="nav" data-section="ledger">⛓ <span>Evidence Ledger</span></button>
+          <button class="nav" data-section="evidence" data-permission="evidence:view">▣ <span>Evidence</span></button>
+          <button class="nav" data-section="graph" data-permission="graph:view">⌘ <span>Entity Graph</span></button>
+          <button class="nav" data-section="assistant" data-permission="assistant:query">✦ <span>Intelligence Assistant</span></button>
+          <button class="nav" data-section="security" data-permission="security:view">◉ <span>Security Center</span></button>
+          <button class="nav" data-section="ledger" data-permission="ledger:view">⛓ <span>Evidence Ledger</span></button>
         </nav>
       </div>
 
@@ -100,6 +100,7 @@
           <p>Evidence ingestion, entity intelligence, graph analysis, security monitoring and tamper-evident audit.</p>
         </div>
         <div class="header-right">
+          <div class="case-pill">ACTIVE CASE: <b id="activeCase">No case selected</b></div>
           <div class="security-pill"><span class="status-dot"></span> SECURE SESSION</div>
           <div class="clock" id="clock"></div>
         </div>
@@ -149,7 +150,7 @@
             <div><b>UNSTRUCTURED</b><span>PDF · DOCX · TXT · JPG · PNG</span></div>
             <div><b>SECURITY</b><span>SHA-256 · size limit · audit</span></div>
           </div>
-          <div class="upload-controls">
+          <div class="upload-controls" data-permission="evidence:ingest">
             <label>Evidence category
               <select id="docType">
                 <option value="AUTO">Auto detect</option><option value="ENTITY_MASTER">Entity Master</option>
@@ -213,7 +214,7 @@
       </section>
 
       <section id="security" class="section hidden">
-        <div class="page-heading"><div><h2>Security Center</h2><p class="muted">Authentication, integrity, audit and security-event monitoring.</p></div><button class="secondary" id="refreshSecurityButton">↻ Refresh security</button></div>
+        <div class="page-heading"><div><h2>Security Center</h2><p class="muted">Authentication, integrity, audit and security-event monitoring.</p></div><button class="secondary" id="refreshSecurityButton" data-permission="security:view">↻ Refresh security</button></div>
         <div class="security-cards">
           <div class="security-card"><span>AUTHENTICATION</span><b>HMAC SESSION</b><small>Signed HttpOnly session cookie</small></div>
           <div class="security-card"><span>PASSWORDS</span><b>SCRYPT</b><small>Salted password hashing</small></div>
@@ -227,7 +228,7 @@
       </section>
 
       <section id="ledger" class="section hidden">
-        <div class="page-heading"><div><h2>Evidence Integrity Ledger</h2><p class="muted">A local, permissioned-style hash chain for tamper-evident auditability.</p></div><button class="primary" id="verifyLedgerButton">VERIFY LEDGER</button></div>
+        <div class="page-heading"><div><h2>Evidence Integrity Ledger</h2><p class="muted">A local, permissioned-style hash chain for tamper-evident auditability.</p></div><button class="primary" id="verifyLedgerButton" data-permission="ledger:verify">VERIFY LEDGER</button></div>
         <div id="ledgerVerifyResult" class="verify-result hidden"></div>
         <div class="ledger-explainer"><div class="chain-icon">⛓</div><div><b>How it works</b><span>Each audit event becomes a block containing its payload, the previous block hash and a new SHA-256 block hash. This prototype demonstrates blockchain concepts without pretending to be a distributed public blockchain.</span></div></div>
         <div class="panel"><div class="panel-title"><b>HASH-CHAIN BLOCKS</b><span id="ledgerCount">0 BLOCKS</span></div><div id="ledgerList" class="ledger-list"></div></div>

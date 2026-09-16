@@ -8,6 +8,8 @@ This package includes the updated light professional interface and security laye
 
 - Light investigation dashboard with navy sidebar
 - Role-based login: Admin, Investigator, Auditor
+- Backend-enforced role permissions on every protected endpoint (see Roles and permissions)
+- Authorization denials recorded as security events and audit-ledger blocks
 - scrypt password hashing
 - HMAC-signed HttpOnly session cookie
 - Session expiration
@@ -87,6 +89,39 @@ Auditor:
 - Password: `Audit@12345`
 
 For a real deployment, replace the development credentials with environment-managed credentials and a strong `SESSION_SECRET`.
+
+## Roles and permissions
+
+Authentication (who the user is) and authorization (what the user may do) are
+separate concerns. Every protected API endpoint declares the permission it
+requires, and the role is re-checked on the backend for each request, so role
+information coming from the browser is never trusted.
+
+| Permission | Admin | Investigator | Auditor |
+| --- | --- | --- | --- |
+| `case:view` - view case workspaces | yes | yes | yes |
+| `case:create` - create cases | yes | yes | no |
+| `evidence:view` - view the evidence register | yes | yes | yes |
+| `evidence:ingest` - ingest evidence | yes | yes | no |
+| `evidence:verify` - verify evidence integrity (SHA-256) | yes | yes | yes |
+| `entity:view` - view entity records | yes | yes | yes |
+| `entity:photo` - attach entity photographs | yes | yes | no |
+| `graph:view` - view the investigation graph and paths | yes | yes | yes |
+| `assistant:query` - query the investigation assistant | yes | yes | no |
+| `security:view` - Security Center (events, audit trail) | yes | no | yes |
+| `ledger:view` - view the hash-chain ledger | yes | no | yes |
+| `ledger:verify` - verify the ledger | yes | no | yes |
+
+- Roles are defined once in `app/rbac.py` and used by both the API layer and the UI.
+- Unknown or unmapped roles receive no permissions, so an unexpected role fails closed.
+- A refused request returns HTTP 403 and is recorded as an `AUTHORIZATION_DENIED`
+  audit event, a `WARNING` security event and a hash-linked ledger block.
+- The dashboard hides controls the signed-in role may not use (declared with
+  `data-permission` attributes and applied from the permissions returned by
+  `/api/session`). This is presentation only; the backend check is authoritative.
+- Security posture counters (failed logins, security events, ledger blocks) in
+  `/api/stats` are returned only to roles with `security:view`.
+
 
 ## Project structure
 

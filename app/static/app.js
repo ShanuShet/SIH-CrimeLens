@@ -4,6 +4,9 @@
 let cy = null;
 let csrfToken = "";
 let currentUser = null;
+let permissions = new Set();
+let currentCaseId = null;
+let currentCaseTitle = "";
 let graphData = {nodes: [], edges: []};
 let currentEntityType = "ALL";
 
@@ -31,6 +34,15 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
+function caseQuery() {
+  // Case-scoped requests: omit the parameter entirely when no case is selected
+  // so the backend never receives an empty/invalid case_id.
+  if (currentCaseId === null || currentCaseId === undefined) return "";
+  const numeric = Number(currentCaseId);
+  if (!Number.isFinite(numeric)) return "";
+  return `?case_id=${encodeURIComponent(numeric)}`;
+}
+
 function showLogin() {
   $("loginOverlay")?.classList.remove("hidden");
   $("appShell")?.classList.add("hidden");
@@ -39,6 +51,49 @@ function showLogin() {
 function showApp() {
   $("loginOverlay")?.classList.add("hidden");
   $("appShell")?.classList.remove("hidden");
+}
+
+/* ---------------------------------------------------------------------------
+ * Role based access control (UI side).
+ *
+ * The session endpoint reports the permissions granted to the signed-in role.
+ * They are used to hide controls the role may not use; the backend re-checks
+ * every request with the same permission names, so this is presentation only.
+ * ------------------------------------------------------------------------- */
+
+function can(permission) {
+  return permissions.has(permission);
+}
+
+function setPermissions(list) {
+  permissions = new Set(Array.isArray(list) ? list : []);
+}
+
+function canAccessSection(id) {
+  const navButton = document.querySelector(`.main-nav .nav[data-section="${id}"]`);
+  const required = navButton?.dataset.permission;
+  return !required || can(required);
+}
+
+function applyRoleAccess() {
+  document.querySelectorAll("[data-permission]").forEach(element => {
+    const required = element.dataset.permission;
+    if (required) element.classList.toggle("hidden", !can(required));
+  });
+
+  const openSection = Array.from(document.querySelectorAll(".section"))
+    .find(section => !section.classList.contains("hidden"));
+
+  if (openSection && openSection.id && !canAccessSection(openSection.id)) {
+    showSection("overview");
+  }
+}
+
+function markSecuritySummaryRestricted() {
+  ["integrityStatus", "ledgerStatus", "securityIntegrity", "securityLedger"].forEach(id => {
+    const element = $(id);
+    if (element) element.textContent = "RESTRICTED";
+  });
 }
 
 async function checkSession() {
@@ -51,7 +106,9 @@ async function checkSession() {
     const data = await response.json();
     csrfToken = data.csrf_token || "";
     currentUser = data.user || {username:data.username, role:data.role};
+    setPermissions(data.permissions);
     setUser(currentUser);
+    applyRoleAccess();
     showApp();
     await refreshAll();
   } catch (error) {
@@ -90,7 +147,9 @@ async function login(event) {
     }
     csrfToken = data.csrf_token || "";
     currentUser = data.user;
+    setPermissions(data.permissions);
     setUser(currentUser);
+    applyRoleAccess();
     if ($("loginPassword")) $("loginPassword").value = "";
     showApp();
     await refreshAll();
@@ -108,10 +167,16 @@ async function logout() {
   }
   csrfToken = "";
   currentUser = null;
+  setPermissions([]);
   showLogin();
 }
 
 function showSection(id) {
+  // Never open a section the signed-in role has no permission for.
+  if (!canAccessSection(id)) {
+    console.warn(`Role is not permitted to open section "${id}".`);
+    id = "overview";
+  }
   document.querySelectorAll(".section").forEach(s => s.classList.add("hidden"));
   const section = $(id);
   if (section) section.classList.remove("hidden");
@@ -128,12 +193,28 @@ function showSection(id) {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([loadStats(), loadCases(), loadDocuments(), loadSecuritySummary()]);
+  await loadCases();
+
+  const tasks = [
+    loadStats(),
+    loadDocuments(),
+    loadGraph()
+  ];
+
+  // Security posture is oversight data: only roles with Security Center access
+  // request it, everyone else sees that it is restricted.
+  if (can("security:view")) {
+    tasks.push(loadSecuritySummary());
+  } else {
+    markSecuritySummaryRestricted();
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 async function loadStats() {
   try {
-    const response = await apiFetch("/api/stats");
+    const response = await apiFetch(`/api/stats${caseQuery()}`);
     if (!response.ok) return;
     const s = await response.json();
     if ($("totalCases")) $("totalCases").textContent = s.total_cases ?? 0;
@@ -141,7 +222,11 @@ async function loadStats() {
     if ($("entityTotal")) $("entityTotal").textContent = s.entity_total ?? s.entities ?? 0;
     if ($("activeLeads")) $("activeLeads").textContent = s.active_leads ?? 0;
     if ($("highRisk")) $("highRisk").textContent = s.high_risk_entities ?? 0;
-    if ($("failedLogins")) $("failedLogins").textContent = s.failed_logins ?? 0;
+    if ($("failedLogins")) {
+      $("failedLogins").textContent = can("security:view")
+        ? (s.failed_logins ?? 0)
+        : "RESTRICTED";
+    }
     if ($("roleValue")) $("roleValue").textContent = s.role ?? currentUser?.role ?? "—";
   } catch (error) {
     console.error("Stats error:", error);
@@ -173,42 +258,132 @@ async function loadCases() {
         </button>
       `).join("") : `<div class="muted">No cases</div>`;
       sidebar.querySelectorAll(".case-side").forEach(button => {
-        button.addEventListener("click", () => {
-          sidebar.querySelectorAll(".case-side").forEach(b => b.classList.remove("active"));
-          button.classList.add("active");
-        });
+        button.addEventListener("click", () => selectCase(button.dataset.caseId));
       });
+
+      const caseIds = cases.map(c => Number(c.id));
+
+      // A previously selected case can disappear between refreshes.
+      if (currentCaseId !== null && !caseIds.includes(Number(currentCaseId))) {
+        currentCaseId = null;
+        currentCaseTitle = "";
+      }
+
+      // Always keep one explicit active case so evidence, graph, entity and
+      // assistant requests stay scoped instead of falling back to global data.
+      if (currentCaseId === null && cases.length) {
+        currentCaseId = Number(cases[0].id);
+        currentCaseTitle = cases[0].title || "";
+      } else if (currentCaseId !== null) {
+        const selected = cases.find(c => Number(c.id) === Number(currentCaseId));
+        if (selected) currentCaseTitle = selected.title || "";
+      }
+
+      updateActiveCaseUi();
     }
   } catch (error) {
     console.error("Cases error:", error);
   }
 }
 
+function updateActiveCaseUi() {
+  const sidebar = $("sidebarCases");
+  if (sidebar) {
+    sidebar.querySelectorAll(".case-side").forEach(button => {
+      button.classList.toggle(
+        "active",
+        currentCaseId !== null &&
+          Number(button.dataset.caseId) === Number(currentCaseId)
+      );
+    });
+  }
+  const badge = $("activeCase");
+  if (badge) {
+    if (currentCaseId === null) {
+      badge.textContent = "No case selected";
+    } else {
+      badge.textContent = currentCaseTitle
+        ? `${currentCaseTitle} (#${currentCaseId})`
+        : `#${currentCaseId}`;
+    }
+  }
+}
+
+async function selectCase(caseId) {
+  const numericCaseId = Number(caseId);
+  if (!Number.isFinite(numericCaseId)) {
+    console.error("Invalid case id:", caseId);
+    return;
+  }
+
+  currentCaseId = numericCaseId;
+
+  const sidebar = $("sidebarCases");
+  if (sidebar) {
+    const selected = sidebar.querySelector(
+      `.case-side[data-case-id="${numericCaseId}"]`
+    );
+    if (selected) currentCaseTitle = selected.textContent.trim();
+  }
+
+  updateActiveCaseUi();
+
+  await Promise.allSettled([
+    loadStats(),
+    loadDocuments(),
+    loadGraph()
+  ]);
+}
+
 async function loadDocuments() {
   const list = $("documentList");
   if (!list) return;
   try {
-    const response = await apiFetch("/api/documents");
+    const response = await apiFetch(`/api/documents${caseQuery()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const docs = await response.json();
     if (!docs.length) {
       list.innerHTML = `<div class="muted">No evidence documents have been ingested.</div>`;
       return;
     }
+    const canVerifyEvidence = can("evidence:verify");
+    const canDownloadEvidence = can("evidence:view");
     list.innerHTML = docs.map(doc => `
       <div class="document-item">
         <b title="${escapeHtml(doc.filename)}">${escapeHtml(doc.filename)}</b>
         <span>${escapeHtml(doc.doc_type || "OTHER")} · ${escapeHtml(doc.data_category || "")}</span>
-        <small>${escapeHtml(doc.integrity_status || "NOT_CHECKED")}</small>
-        <button class="secondary verify-button" data-verify-id="${escapeHtml(doc.id)}">VERIFY</button>
+        <small>${escapeHtml(doc.case_reference || doc.case_title || "UNLINKED")} · ${escapeHtml(doc.integrity_status || "NOT_CHECKED")}</small>
+        <span class="document-actions">
+          ${canDownloadEvidence && doc.sha256 ? `<a class="secondary verify-button" href="/api/evidence/${encodeURIComponent(doc.id)}/download${caseQuery()}">DOWNLOAD</a>` : ""}
+          ${canVerifyEvidence ? `<button class="secondary verify-button" data-verify-id="${escapeHtml(doc.id)}">VERIFY</button>` : ""}
+          <button class="secondary verify-button" data-provenance-id="${escapeHtml(doc.id)}">PROVENANCE</button>
+        </span>
       </div>
     `).join("");
     list.querySelectorAll("[data-verify-id]").forEach(btn => {
       btn.addEventListener("click", () => verifyEvidence(btn.dataset.verifyId, btn));
     });
+    list.querySelectorAll("[data-provenance-id]").forEach(btn => {
+      btn.addEventListener("click", () => loadProvenance(btn.dataset.provenanceId, btn));
+    });
   } catch (error) {
     list.innerHTML = `<div class="muted">Unable to load evidence.</div>`;
     console.error(error);
+  }
+}
+
+async function loadProvenance(id, button) {
+  if (button) button.disabled = true;
+  try {
+    const response = await apiFetch(`/api/evidence/${encodeURIComponent(id)}/provenance${caseQuery()}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    if ($("uploadResult")) $("uploadResult").textContent = JSON.stringify(data, null, 2);
+  } catch (error) {
+    if ($("uploadResult")) $("uploadResult").textContent = `Provenance unavailable: ${error.message}`;
+    console.error(error);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -222,7 +397,24 @@ async function uploadEvidence() {
   const form = new FormData();
   const docType = $("docType")?.value || "AUTO";
   form.append("doc_type", docType);
-  for (const file of input.files) form.append("files", file);
+
+  if (
+    currentCaseId === null ||
+    currentCaseId === undefined ||
+    !Number.isFinite(Number(currentCaseId))
+  ) {
+    if (result) {
+      result.textContent = "Please select a case before uploading evidence.";
+    }
+    updateActiveCaseUi();
+    return;
+  }
+
+  form.append("case_id", String(currentCaseId));
+
+  for (const file of input.files) {
+    form.append("files", file);
+  }
 
   try {
     if (result) result.textContent = "Ingesting evidence…";
@@ -240,12 +432,14 @@ async function uploadEvidence() {
 async function verifyEvidence(id, button) {
   if (button) button.disabled = true;
   try {
-    const response = await apiFetch(`/api/evidence/${encodeURIComponent(id)}/verify`);
+    const response = await apiFetch(`/api/evidence/${encodeURIComponent(id)}/verify${caseQuery()}`);
     const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     if ($("uploadResult")) $("uploadResult").textContent = JSON.stringify(data, null, 2);
     await loadDocuments();
     await loadStats();
   } catch (error) {
+    if ($("uploadResult")) $("uploadResult").textContent = `Verification failed: ${error.message}`;
     console.error(error);
   } finally {
     if (button) button.disabled = false;
@@ -328,6 +522,7 @@ async function verifyLedger() {
   try {
     const response = await apiFetch("/api/security/verify", {method:"POST"});
     const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     if (box) {
       box.className = `verify-result ${data.valid ? "ok" : "bad"}`;
       box.textContent = data.valid
@@ -362,7 +557,12 @@ async function createCase(event) {
     $("newCaseModal")?.classList.add("hidden");
     $("newCaseForm")?.reset();
     await loadCases();
-    await loadStats();
+    // Make the newly created case the active investigation case.
+    if (Number.isFinite(Number(data.id))) {
+      await selectCase(data.id);
+    } else {
+      await loadStats();
+    }
   } catch (error) {
     if (errorBox) errorBox.textContent = error.message;
   }
@@ -382,10 +582,13 @@ async function ask(question) {
     const response = await apiFetch("/api/chat", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({question:text})
+      body:JSON.stringify({
+  question: text,
+  case_id: currentCaseId
+})
     });
     const data = await response.json().catch(() => ({}));
-    const answer = data.answer || data.response || data.message || data.error || "No response available.";
+    const answer = data.answer || data.response || data.message || data.error || data.detail || "No response available.";
     if (chat) {
       chat.insertAdjacentHTML("beforeend", `<div class="bot"><b>CrimeLens:</b><div class="assistant-answer">${escapeHtml(answer)}</div></div>`);
       chat.scrollTop = chat.scrollHeight;
@@ -1172,7 +1375,9 @@ async function loadEntityDetails(entityKey) {
   if (!box) return;
   box.innerHTML = `<div class="panel-title"><b>ENTITY INFORMATION</b><span>LOADING</span></div><p class="muted">Loading evidence-backed details…</p>`;
   try {
-    const response = await apiFetch(`/api/entity/${encodeURIComponent(entityKey)}`);
+    const response = await apiFetch(
+      `/api/entity/${encodeURIComponent(entityKey)}${caseQuery()}`,
+    );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     renderEntityInformation(data);
@@ -1615,7 +1820,7 @@ async function loadGraph() {
 
         const response =
             await apiFetch(
-                "/api/graph"
+                `/api/graph${caseQuery()}`
             );
 
         if (!response.ok) {

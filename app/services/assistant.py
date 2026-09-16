@@ -3,6 +3,7 @@ import re
 
 from ..config import OPENAI_API_KEY, OPENAI_MODEL
 from ..models import Entity, Relationship, Document, Case
+from .risk_service import risk_band, risk_scores_for_rows
 
 
 # ============================================================
@@ -25,17 +26,54 @@ def entity_display_name(entity):
 # DATABASE LOADERS
 # ============================================================
 
-def get_entities(db):
-    return db.query(Entity).all()
+def get_entities(db, case_id=None):
+    # Entity currently has no case_id column, so case ownership is derived
+    # through case-scoped relationships - the same rule used by graph_payload.
+    if case_id is None:
+        return db.query(Entity).all()
 
+    rows = (
+        db.query(Relationship.source, Relationship.target)
+        .filter(Relationship.case_id == case_id)
+        .all()
+    )
 
-def get_relationships(db):
-    return db.query(Relationship).all()
+    keys = set()
 
+    for source, target in rows:
+        if source:
+            keys.add(source)
 
-def get_documents(db):
+        if target:
+            keys.add(target)
+
+    if not keys:
+        return []
+
     return (
-        db.query(Document)
+        db.query(Entity)
+        .filter(Entity.key.in_(keys))
+        .all()
+    )
+
+
+def get_relationships(db, case_id=None):
+    query = db.query(Relationship)
+
+    if case_id is not None:
+        query = query.filter(Relationship.case_id == case_id)
+
+    return query.all()
+
+
+def get_documents(db, case_id=None):
+    query = db.query(Document)
+
+    if case_id is not None:
+        query = query.filter(Document.case_id == case_id)
+
+    return (
+        query
         .order_by(Document.id.asc())
         .all()
     )
@@ -139,9 +177,9 @@ def find_entities(db, question):
     return partial
 
 
-def get_connected_entities(db, entity_keys):
-    relationships = get_relationships(db)
-    entities = get_entities(db)
+def get_connected_entities(db, entity_keys,case_id=None):
+    relationships = get_relationships(db,case_id)
+    entities = get_entities(db,case_id)
 
     entity_map = {
         e.key: e
@@ -179,11 +217,11 @@ def get_connected_entities(db, entity_keys):
 # GRAPH SUMMARY
 # ============================================================
 
-def build_graph_summary(db):
+def build_graph_summary(db,case_id=None):
 
-    entities = get_entities(db)
-    relationships = get_relationships(db)
-    documents = get_documents(db)
+    entities = get_entities(db,case_id)
+    relationships = get_relationships(db,case_id)
+    documents = get_documents(db,case_id)
     cases = get_cases(db)
 
     degree = calculate_degrees(relationships)
@@ -226,14 +264,14 @@ def build_graph_summary(db):
 # DOCUMENT SEARCH
 # ============================================================
 
-def search_documents(db, question, limit=5):
+def search_documents(db, question, limit=5, case_id=None):
 
     q = normalize_text(question)
 
     if not q:
         return []
 
-    documents = get_documents(db)
+    documents = get_documents(db,case_id)
 
     results = []
 
@@ -363,13 +401,13 @@ def find_current_case(db):
 # LOCAL FREE-FORM ANSWER
 # ============================================================
 
-def local_freeform_answer(db, question):
+def local_freeform_answer(db, question,case_id=None):
 
     q = normalize_text(question)
 
-    entities = get_entities(db)
-    relationships = get_relationships(db)
-    documents = get_documents(db)
+    entities = get_entities(db,case_id)
+    relationships = get_relationships(db,case_id)
+    documents = get_documents(db,case_id)
 
     degree = calculate_degrees(relationships)
 
@@ -406,7 +444,7 @@ def local_freeform_answer(db, question):
 
     if any(word in q for word in summary_words):
 
-        graph_summary = build_graph_summary(db)
+        graph_summary = build_graph_summary(db, case_id)
 
         entity_types = ", ".join(
             f"{k}: {v}"
@@ -630,7 +668,7 @@ def local_freeform_answer(db, question):
             ],
         }
 
-    # --------------------------------------------------------
+    # -------------------------------------------------------
     # ENTITY-BASED QUESTIONS
     # --------------------------------------------------------
 
@@ -647,11 +685,12 @@ def local_freeform_answer(db, question):
         }
 
         connected, matching_relationships = (
-            get_connected_entities(
-                db,
-                matched_keys
-            )
+        get_connected_entities(
+            db,
+            matched_keys,
+            case_id
         )
+    )
 
         result_entities = [
             entity_to_dict(e)
@@ -714,9 +753,10 @@ def local_freeform_answer(db, question):
     # --------------------------------------------------------
 
     matching_documents = search_documents(
-        db,
-        question
-    )
+    db,
+    question,
+    case_id=case_id
+)
 
     if matching_documents:
 
@@ -775,7 +815,7 @@ def local_freeform_answer(db, question):
 # LLM / GRAPH-RAG ANSWER
 # ============================================================
 
-def llm_answer(db, question):
+def llm_answer(db, question, case_id=None):
 
     from openai import OpenAI
 
@@ -783,21 +823,49 @@ def llm_answer(db, question):
         api_key=OPENAI_API_KEY
     )
 
-    entities = get_entities(db)
-    relationships = get_relationships(db)
-    documents = get_documents(db)
+    entities = get_entities(db, case_id)
+    relationships = get_relationships(db, case_id)
+    documents = get_documents(db, case_id)
     cases = get_cases(db)
 
     # --------------------------------------------------------
     # ENTITY CONTEXT
     # --------------------------------------------------------
+    # Entity.risk is a case-blind stored aggregate, so it must not be quoted to
+    # the model as "the risk in this case": an entity shared with another case
+    # would carry a score influenced by that other case. The score is recomputed
+    # from the active case's own graph. With no active case there is no
+    # investigation to score, so the stored value is reported with its band and
+    # the basis is left unset rather than presenting a cross-case number as a
+    # case-scoped one.
+
+    if case_id is not None:
+        risk_entities, case_risk = risk_scores_for_rows(
+            entities, relationships, case_id=case_id
+        )
+    else:
+        risk_entities, case_risk = {}, {}
 
     entity_context = [
         {
             "key": e.key,
             "label": e.label,
             "name": e.name,
-            "risk": e.risk,
+            "risk": (
+                (risk_entities.get(e.key) or {}).get("score")
+                if risk_entities
+                else e.risk
+            ),
+            "risk_band": (
+                (risk_entities.get(e.key) or {}).get("band")
+                if risk_entities
+                else risk_band(float(e.risk or 0.0))
+            ),
+            "risk_basis": (
+                (risk_entities.get(e.key) or {}).get("basis")
+                if risk_entities
+                else "STORED_CROSS_CASE_AGGREGATE"
+            ),
         }
         for e in entities
     ]
@@ -988,7 +1056,7 @@ Answer the user's question using only this evidence.
 # MAIN ASSISTANT ENTRY POINT
 # ============================================================
 
-def answer_question(db, question: str):
+def answer_question(db, question: str,case_id=None):
 
     question = str(
         question or ""
@@ -1015,15 +1083,17 @@ def answer_question(db, question: str):
         try:
             return llm_answer(
                 db,
-                question
+                question,
+                case_id
             )
 
         except Exception as exc:
 
             local_result = local_freeform_answer(
-                db,
-                question
-            )
+            db,
+            question,
+            case_id
+        )
 
             return {
                 "mode": "LOCAL_GRAPH_FALLBACK",
@@ -1047,8 +1117,8 @@ def answer_question(db, question: str):
     # No API key:
     # Use dynamic local evidence analysis.
     # --------------------------------------------------------
-
     return local_freeform_answer(
-        db,
-        question
-    )
+    db,
+    question,
+    case_id
+)

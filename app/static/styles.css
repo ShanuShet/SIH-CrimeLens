@@ -183,6 +183,8 @@ header p{margin:0;color:var(--muted);font-size:13px}
 .file-picker input{padding:9px}
 .result{margin:15px 0;border:1px solid #dbe4ee;background:#f8fafc;border-radius:9px;padding:12px;min-height:60px;white-space:pre-wrap;overflow:auto;color:#52637a;font:11px/1.5 ui-monospace,monospace}
 .document-list{display:grid;gap:8px}.document-item{display:grid;grid-template-columns:minmax(0,1.3fr) .7fr .6fr auto;gap:10px;align-items:center;padding:12px;border:1px solid #e1e8f0;border-radius:9px;background:#fbfcfe;font-size:10px}.document-item b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.document-item small{color:#718198}.verify-button{padding:7px 9px!important;font-size:9px!important}
+.document-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end}
+.document-actions a.secondary{text-decoration:none;display:inline-block;text-align:center;line-height:1.2}
 
 /* GRAPH */
 .graph-layout{display:grid;grid-template-columns:245px minmax(0,1fr);gap:14px}
@@ -925,4 +927,28 @@ header p{margin:0;color:var(--muted);font-size:13px}
 .empty-state span {
     display: block;
     font-size: 11px;
+}
+/* Active case indicator (header) */
+.case-pill{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:7px 10px;
+    border:1px solid #c7d9f5;
+    border-radius:999px;
+    color:#1d4ed8;
+    background:#eff6ff;
+    font-size:9px;
+    font-weight:750;
+    letter-spacing:.8px;
+    max-width:320px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+.case-pill b{
+    font-weight:800;
+    color:#0f2c5c;
+    overflow:hidden;
+    text-overflow:ellipsis;
 }

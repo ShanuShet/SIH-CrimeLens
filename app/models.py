@@ -39,7 +39,16 @@ class Entity(Base):
 class Relationship(Base):
     __tablename__ = "relationships"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(
+        Integer,
+        primary_key=True
+    )
+
+    case_id = Column(
+        Integer,
+        nullable=True,
+        index=True
+    )
 
     source = Column(
         String(255),
@@ -65,7 +74,6 @@ class Relationship(Base):
         nullable=True
     )
 
-
 class Case(Base):
     __tablename__ = "cases"
 
@@ -74,8 +82,16 @@ class Case(Base):
         primary_key=True
     )
 
+    reference_id = Column(
+        String(120),
+        unique=True,
+        index=True,
+        nullable=True
+    )
+
     title = Column(
-        String(255)
+        String(255),
+        nullable=False
     )
 
     status = Column(
@@ -100,6 +116,12 @@ class Document(Base):
     id = Column(
         Integer,
         primary_key=True
+    )
+
+    case_id = Column(
+        Integer,
+        nullable=True,
+        index=True
     )
 
     filename = Column(

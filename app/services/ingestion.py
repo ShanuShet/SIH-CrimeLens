@@ -195,7 +195,17 @@ def _parse_entity_master(rows):
     if not rows:
         return entities, relationships
 
-    columns = list(rows[0].keys())
+    # JSON evidence frequently mixes record shapes in one file (entity rows plus
+    # separate relationship rows). Using the union of the keys keeps those
+    # columns detectable; for a regular table this is the same as the header row.
+    columns = []
+
+    for row in rows:
+
+        for column in row.keys():
+
+            if column not in columns:
+                columns.append(column)
 
     # --------------------------------------------------------
     # Identify columns
@@ -271,6 +281,16 @@ def _parse_entity_master(rows):
             "location",
             "address",
             "place",
+        ]
+    )
+
+    person_id_col = _find_column(
+        columns,
+        [
+            "person_id",
+            "personid",
+            "person_key",
+            "subject_id",
         ]
     )
 
@@ -443,6 +463,29 @@ def _parse_entity_master(rows):
                 seen,
                 "Location",
                 row.get(location_col)
+            )
+
+        # ---------------- PERSON WITHOUT AN EXPLICIT TYPE ----------------
+
+        # Criminal records, FIR subject lists and plain contact exports carry a
+        # person name but no entity_type column. Without this the subject of the
+        # record would never become an entity at all, so the graph would lose the
+        # person the evidence is about.
+
+        if not entity_type:
+
+            person_identifier = (
+                _clean(row.get(person_id_col))
+                if person_id_col
+                else ""
+            ) or name or entity_id
+
+            _add_entity(
+                entities,
+                seen,
+                "Person",
+                person_identifier,
+                name or person_identifier
             )
 
     # ========================================================
@@ -858,28 +901,168 @@ def _read_excel(path):
 # JSON READER
 # ============================================================
 
-def _read_json(path):
-    with open(
-        path,
-        "r",
-        encoding="utf-8"
-    ) as f:
-        data = json.load(f)
+# Object keys understood to wrap a collection of records, so an export such as
+# {"entities": [ {...} ]} is unwrapped instead of being treated as one record.
+_JSON_RECORD_CONTAINERS = (
+    "records",
+    "entities",
+    "persons",
+    "people",
+    "items",
+    "entries",
+    "rows",
+    "results",
+    "data",
+)
 
-    if isinstance(data, list):
-        return data
 
-    if isinstance(data, dict):
-        return [data]
+def _json_records(value):
+    """
+    Normalize parsed JSON into a list of record dictionaries.
 
-    return []
+    Arrays of objects are used directly, a wrapping object such as
+    {"records": [ {...} ]} is unwrapped (including nested wrappers), and a plain
+    object is treated as a single record. JSON that cannot be understood as
+    records raises an explicit error instead of silently extracting nothing.
+    """
+
+    if isinstance(value, dict):
+
+        for key in _JSON_RECORD_CONTAINERS:
+
+            inner = value.get(key)
+
+            if isinstance(inner, dict):
+
+                nested = _json_records(inner)
+
+                if nested:
+                    return nested
+
+            elif (
+                isinstance(inner, list)
+                and inner
+                and all(isinstance(item, dict) for item in inner)
+            ):
+
+                return list(inner)
+
+        return [value]
+
+    if isinstance(value, list):
+
+        if not value:
+            return []
+
+        for index, item in enumerate(value):
+
+            if not isinstance(item, dict):
+
+                raise RuntimeError(
+                    f"JSON array entry {index} is "
+                    f"{type(item).__name__}, expected an object"
+                )
+
+        return list(value)
+
+    raise RuntimeError(
+        "Unsupported JSON document: expected an object or an array "
+        f"of objects, found {type(value).__name__}"
+    )
+
+
+def _read_json(path, display_name=None):
+    """
+    Read a JSON evidence file.
+
+    Returns (records, envelope): the record dictionaries to extract from, plus
+    the wrapper object's own fields when the records were nested inside one
+    (for example {"case_name": "...", "entities": [ {...} ]}), so wrapper context
+    is preserved rather than discarded.
+
+    display_name is the investigator-facing evidence name; stored files are
+    renamed internally, so error messages must not report the storage name.
+
+    Malformed JSON, unsupported document shapes and JSON without any records all
+    fail here with an explicit message - a JSON evidence file must never be
+    reported as ingested while contributing nothing.
+    """
+
+    label = display_name or Path(path).name
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+    except json.JSONDecodeError as exc:
+
+        raise RuntimeError(
+            f"Invalid JSON in {label}: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})"
+        ) from exc
+
+    records = _json_records(data)
+
+    if not records or all(not record for record in records):
+
+        raise RuntimeError(
+            f"No records found in {label}: expected a JSON "
+            "object or a non-empty array of objects"
+        )
+
+    envelope = {}
+
+    if isinstance(data, dict) and records != [data]:
+
+        for key, value in data.items():
+
+            # Skip record collections and any nested wrapper that produced the
+            # records themselves; keep the remaining context fields.
+            if isinstance(value, list):
+                continue
+
+            if isinstance(value, dict) and _json_records(value) == records:
+                continue
+
+            envelope[key] = value
+
+    return records, envelope
+
+
+def _flatten_record(record, prefix="", depth=0):
+    """
+    Flatten a nested record into single level keys.
+
+    Evidence fields are often nested ({"phone": {"number": "9000000001"}}).
+    The extractors work on flat columns, so nested objects are flattened into
+    "_"-joined keys, which keeps the value usable as an identifier instead of
+    stringifying the nested object into a meaningless one.
+    """
+
+    flat = {}
+
+    for key, value in record.items():
+
+        name = f"{prefix}_{key}" if prefix else str(key)
+
+        if isinstance(value, dict) and depth < 3:
+
+            flat.update(
+                _flatten_record(value, name, depth + 1)
+            )
+
+        else:
+
+            flat[name] = value
+
+    return flat
 
 
 # ============================================================
 # STRUCTURED PARSER
 # ============================================================
 
-def parse_structured(path: str, doc_type: str):
+def parse_structured(path: str, doc_type: str, display_name: str | None = None):
     path_obj = Path(path)
 
     normalized_type = normalize_doc_type(
@@ -888,19 +1071,29 @@ def parse_structured(path: str, doc_type: str):
 
     suffix = path_obj.suffix.lower()
 
+    envelope = {}
+
     if suffix == ".csv":
-        rows = _read_csv(path)
+        source_rows = _read_csv(path)
 
     elif suffix in {".xlsx", ".xls"}:
-        rows = _read_excel(path)
+        source_rows = _read_excel(path)
 
     elif suffix == ".json":
-        rows = _read_json(path)
+        source_rows, envelope = _read_json(path, display_name)
 
     else:
         raise RuntimeError(
             f"Unsupported structured file: {suffix}"
         )
+
+    # The extractors work on flat column names, so nested record fields are
+    # flattened for extraction only. The original records are kept for the
+    # document preview so nested source information is preserved.
+    rows = [
+        _flatten_record(row)
+        for row in source_rows
+    ]
 
     entities = []
     relationships = []
@@ -941,11 +1134,14 @@ def parse_structured(path: str, doc_type: str):
 
     else:
 
-        columns = (
-            list(rows[0].keys())
-            if rows
-            else []
-        )
+        columns = []
+
+        for row in rows:
+
+            for column in row.keys():
+
+                if column not in columns:
+                    columns.append(column)
 
         normalized_columns = {
             _norm_column(c)
@@ -992,9 +1188,12 @@ def parse_structured(path: str, doc_type: str):
 
     metadata = {
         "detected_type": normalized_type,
-        "rows": len(rows),
-        "preview": rows[:10],
+        "rows": len(source_rows),
+        "preview": source_rows[:10],
     }
+
+    if envelope:
+        metadata["envelope"] = envelope
 
     return (
         entities,

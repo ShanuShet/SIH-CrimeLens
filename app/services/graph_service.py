@@ -1,5 +1,6 @@
 from collections import deque
 import re
+from urllib.parse import quote
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from ..config import (
     NEO4J_PASSWORD,
     NEO4J_DATABASE,
 )
+from .risk_service import compute_case_risk_from_rows
 
 
 # ============================================================
@@ -72,6 +74,28 @@ def database_entity_identity(entity):
         entity.label,
         entity.name
     )
+
+
+# ============================================================
+# ENTITY PHOTO ACCESS
+# ============================================================
+
+def entity_photo_url(entity_key, image_path=None):
+    """
+    Return the authenticated API URL for an entity's stored profile image.
+
+    Evidence storage is private: the uploads directory is deliberately not
+    served as static files, so photographs are only reachable through the
+    authorized /api/entity/{key}/photo endpoint. Rows written by earlier
+    versions may still hold the old public "/uploads/persons/..." value; the
+    stored string is therefore only treated as a flag meaning "a photograph
+    exists" and is never handed to the browser as a URL.
+    """
+
+    if not image_path:
+        return ""
+
+    return f"/api/entity/{quote(str(entity_key), safe='')}/photo"
 
 
 # ============================================================
@@ -222,7 +246,8 @@ class GraphService:
 def upsert_graph(
     db: Session,
     entities,
-    relationships
+    relationships,
+    case_id=None,
 ):
 
     # Maps temporary incoming keys
@@ -240,10 +265,24 @@ def upsert_graph(
         if not incoming_key:
             continue
 
-        existing = resolve_existing_entity(
-            db,
-            incoming
+        # The canonical key is authoritative: the same identifier seen again -
+        # even with a different display name in a later document, such as
+        # "PH001" versus "9000000001" - is the same entity and must be reused.
+        # Inserting it again would violate the unique key and abort the whole
+        # ingestion. Resolution by identity below therefore only runs for keys
+        # that are not stored yet.
+        existing = (
+            db.query(Entity)
+            .filter(Entity.key == incoming_key)
+            .first()
         )
+
+        if not existing:
+
+            existing = resolve_existing_entity(
+                db,
+                incoming
+            )
 
         if existing:
 
@@ -301,10 +340,14 @@ def upsert_graph(
         if canonical_source == canonical_target:
             continue
 
-        # Avoid duplicate identical relationships.
+        # Avoid duplicate identical relationships inside the same case.
+        # The case_id filter is required: without it, an identical
+        # relation in a different case would be silently skipped and that
+        # case's graph would lose the edge.
         existing_relation = (
             db.query(Relationship)
             .filter(
+                Relationship.case_id == case_id,
                 Relationship.source == canonical_source,
                 Relationship.target == canonical_target,
                 Relationship.relation ==
@@ -330,15 +373,16 @@ def upsert_graph(
                 target=canonical_target,
                 relation=incoming_relation.get(
                     "relation",
-                    "RELATED_TO"
+                    "RELATED_TO",
                 ),
                 timestamp=incoming_relation.get(
                     "timestamp",
-                    ""
+                    "",
                 ),
                 amount=incoming_relation.get(
                     "amount"
                 ),
+                case_id=case_id,
             )
         )
 
@@ -349,32 +393,101 @@ def upsert_graph(
 # GRAPH PAYLOAD
 # ============================================================
 
-def graph_payload(db: Session):
+def graph_payload(db: Session, case_id=None):
+
+    # --------------------------------------------------------
+    # CASE-SCOPED RELATIONSHIPS
+    # --------------------------------------------------------
+
+    relationship_query = db.query(Relationship)
+
+    if case_id is not None:
+        relationship_query = relationship_query.filter(
+            Relationship.case_id == case_id
+        )
+
+    relationships = relationship_query.all()
+
+    # --------------------------------------------------------
+    # FIND ENTITIES BELONGING TO THE SELECTED GRAPH
+    # --------------------------------------------------------
+
+    entity_keys = set()
+
+    for relationship in relationships:
+        entity_keys.add(relationship.source)
+        entity_keys.add(relationship.target)
+
+    # --------------------------------------------------------
+    # LOAD ONLY GRAPH ENTITIES
+    # --------------------------------------------------------
+
+    entity_query = db.query(Entity)
+
+    if entity_keys:
+        entity_query = entity_query.filter(
+            Entity.key.in_(entity_keys)
+        )
+    else:
+        entity_query = entity_query.filter(False)
+
+    entities = entity_query.all()
+
+    # --------------------------------------------------------
+    # COMPUTED RISK (CASE SCOPED)
+    # --------------------------------------------------------
+    # Risk is recomputed from this case's own graph rather than read from
+    # Entity.risk. That column is case blind, so a canonical entity such as a
+    # phone number shared with another case would otherwise display a score
+    # influenced by that other case. compute_case_risk_from_rows never reads the
+    # column, the clock or a random source, so the same graph always yields the
+    # same score, and every point is attributable to a named factor.
+
+    risk_report = compute_case_risk_from_rows(
+        entities,
+        relationships,
+        case_id=case_id,
+    )
+
+    entity_risk = risk_report["entities"]
+
+    # --------------------------------------------------------
+    # BUILD NODES
+    # --------------------------------------------------------
 
     nodes = []
 
-    for entity in db.query(Entity).all():
+    for entity in entities:
+
+        risk_entry = entity_risk.get(entity.key) or {}
 
         nodes.append({
             "data": {
                 "id": entity.key,
                 "label": entity.label,
                 "name": entity.name,
-                "risk": entity.risk,
-                "image": getattr(
-                    entity,
-                    "image_path",
-                    ""
-                ) or "",
+                "risk": risk_entry.get("score", 0.0),
+                "risk_band": risk_entry.get("band", "UNSCORED"),
+                "risk_basis": risk_entry.get(
+                    "basis",
+                    "STORED_CROSS_CASE_AGGREGATE",
+                ),
+                # Never emit a storage path or a public uploads URL: the
+                # browser only receives the authorized photo endpoint.
+                "image": entity_photo_url(
+                    entity.key,
+                    getattr(entity, "image_path", "")
+                ),
             }
         })
 
+    # --------------------------------------------------------
+    # BUILD EDGES
+    # --------------------------------------------------------
+
     edges = []
 
-    for relationship in db.query(
-        Relationship
-    ).all():
-
+    for relationship in relationships:
         edges.append({
             "data": {
                 "id": str(relationship.id),
@@ -388,9 +501,8 @@ def graph_payload(db: Session):
 
     return {
         "nodes": nodes,
-        "edges": edges
+        "edges": edges,
     }
-
 
 # ============================================================
 # SHORTEST PATH
@@ -400,13 +512,18 @@ def shortest_path(
     db: Session,
     source,
     target,
-    max_hops=5
+    max_hops=5,
+    case_id=None,
 ):
 
-    relationships = (
-        db.query(Relationship)
-        .all()
-    )
+    relationship_query = db.query(Relationship)
+
+    if case_id is not None:
+        relationship_query = relationship_query.filter(
+            Relationship.case_id == case_id
+        )
+
+    relationships = relationship_query.all()
 
     adjacency = {}
 
