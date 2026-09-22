@@ -1,5 +1,0 @@
-location_event_id,timestamp,entity_id,location_id,location_name,latitude,longitude
-L3001,2026-09-16 21:58:00,P004,LOC004,Service Road Camera Point,12.9716,77.5946
-L3002,2026-09-16 22:31:18,P004,LOC003,Apartment Parking Entrance,12.9721,77.5952
-L3003,2026-09-16 22:36:42,P005,LOC003,Apartment Pedestrian Gate,12.9720,77.5950
-L3004,2026-09-16 22:48:09,V003,LOC004,Service Road Camera Point,12.9716,77.5946
