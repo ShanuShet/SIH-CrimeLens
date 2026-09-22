@@ -102,3 +102,31 @@ def migrate_case_fields():
                     "ADD COLUMN case_id INTEGER"
                 )
             )
+
+        # --------------------------------------------------
+        # ENTITIES
+        # --------------------------------------------------
+
+        entity_columns = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA table_info(entities)")
+            )
+        }
+
+        new_entity_fields = {
+            "case_id": "INTEGER",
+            "phone": "VARCHAR(50)",
+            "email": "VARCHAR(120)",
+            "account": "VARCHAR(100)",
+            "vehicle": "VARCHAR(100)",
+            "identifier": "VARCHAR(100)",
+            "resolution_status": "VARCHAR(50)",
+            "match_reason": "VARCHAR(255)",
+        }
+
+        for col_name, col_type in new_entity_fields.items():
+            if col_name not in entity_columns:
+                conn.execute(
+                    text(f"ALTER TABLE entities ADD COLUMN {col_name} {col_type}")
+                )

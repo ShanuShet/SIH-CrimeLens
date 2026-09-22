@@ -13,6 +13,7 @@ Inputs used (all real, all already stored):
 
   * investigative relationship count touching the entity (degree)
   * number of distinct connected entities (counterparties)
+  * repeated interactions with the same counterparties (repeat connections)
   * number of distinct relationship types touching the entity
   * how much of the case is reachable within RISK_REACH_HOPS hops
   * the sum of Relationship.amount on edges touching the entity
@@ -64,9 +65,10 @@ RISK_REACH_HOPS = 3
 # Entity factor weights. They sum to 1.0, so the weighted score is inherently
 # bounded and 100 points means "maximal on every measured factor".
 ENTITY_WEIGHTS = {
-    "connectivity": 0.30,
-    "counterparties": 0.25,
-    "reach": 0.25,
+    "connectivity": 0.25,
+    "counterparties": 0.20,
+    "repeat_connections": 0.15,
+    "reach": 0.20,
     "relation_diversity": 0.10,
     "financial_exposure": 0.10,
 }
@@ -88,6 +90,9 @@ CONNECTIVITY_SATURATION = 8
 
 # Distinct connected entities needed for the counterparties factor to saturate.
 COUNTERPARTY_SATURATION = 5
+
+# Repeated interactions with same counterparties needed for the repeat factor to saturate.
+REPEAT_CONNECTION_SATURATION = 4
 
 # Distinct relationship types needed for the diversity factor to saturate.
 RELATION_TYPE_SATURATION = 4
@@ -317,6 +322,8 @@ def score_entities(index, adjacency, investigative):
 
         counterparties = {other for other, _, _ in links if other != key}
 
+        repeat_count = max(0, degree - len(counterparties))
+
         relation_types = {canonical_relation(relation) for _, relation, _ in links}
 
         reachable = reachable_within(key, adjacency, RISK_REACH_HOPS)
@@ -353,6 +360,14 @@ def score_entities(index, adjacency, investigative):
                 ENTITY_WEIGHTS["counterparties"],
                 float(len(counterparties)),
                 "distinct connected entities",
+            ),
+            make_factor(
+                "repeat_connections",
+                repeat_count / REPEAT_CONNECTION_SATURATION,
+                ENTITY_WEIGHTS["repeat_connections"],
+                float(repeat_count),
+                "repeated interactions with counterparties",
+                note=f"{repeat_count} repeat links beyond unique counterparties",
             ),
             make_factor(
                 "reach",
@@ -395,6 +410,7 @@ def score_entities(index, adjacency, investigative):
             "synthetic": is_case_node(key),
             "degree": degree,
             "counterparties": len(counterparties),
+            "repeat_connections": repeat_count,
             "relation_types": sorted(relation_types),
             "reachable": len(reachable_peers),
             "exposure": round(exposure.get(key, 0.0), 2),

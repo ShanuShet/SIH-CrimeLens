@@ -29,11 +29,12 @@ from .database import (
 from .models import (
     Entity, Relationship, Case, Document,
     User, AuditEvent, BlockchainBlock,
-    EvidenceIntegrity, SecurityEvent,
+    EvidenceIntegrity, SecurityEvent, DocumentChunk,
 )
 from .rbac import (
     PERM_ASSISTANT_QUERY,
     PERM_CASE_CREATE,
+    PERM_CASE_DELETE,
     PERM_CASE_VIEW,
     PERM_ENTITY_PHOTO,
     PERM_ENTITY_VIEW,
@@ -74,6 +75,7 @@ from .services.risk_service import (
     stored_risk_basis,
 )
 from .services.assistant import answer_question, get_entities
+from .services.rag_service import invalidate_case_cache
 from .security import (
     SESSION_COOKIE, SESSION_TTL,
     current_user, require_user, require_csrf,
@@ -602,8 +604,38 @@ async def security_headers(request: Request, call_next):
 def home(request: Request):
     return templates.TemplateResponse(
         request=request,
-        name="index.html",
+        name="home.html",
         context={"request": request},
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/cases", response_class=HTMLResponse)
+@app.get("/evidence", response_class=HTMLResponse)
+@app.get("/entities", response_class=HTMLResponse)
+@app.get("/relationships", response_class=HTMLResponse)
+@app.get("/graph", response_class=HTMLResponse)
+@app.get("/risk", response_class=HTMLResponse)
+@app.get("/assistant", response_class=HTMLResponse)
+@app.get("/audit", response_class=HTMLResponse)
+def app_views(request: Request):
+    path = request.url.path.strip("/")
+    section_map = {
+        "dashboard": "overview",
+        "cases": "casesSection",
+        "evidence": "evidenceSection",
+        "entities": "entitiesSection",
+        "relationships": "relationshipsSection",
+        "graph": "graphSection",
+        "risk": "riskSection",
+        "assistant": "assistantSection",
+        "audit": "securitySection",
+    }
+    initial_section = section_map.get(path, "overview")
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"request": request, "initial_section": initial_section},
     )
 
 
@@ -728,13 +760,6 @@ def stats(
     # ------------------------------------------------------------
     # COMPUTED RISK (CASE SCOPED)
     # ------------------------------------------------------------
-    # Entity.risk is a case-blind stored aggregate, so it cannot answer a
-    # case-scoped question: an entity such as a phone number shared with another
-    # case would carry a score influenced by that other case. When a case is
-    # selected the counters are therefore recomputed from this case's own graph.
-    # With no case selected there is no investigation to score, so the stored
-    # aggregate is reported and explicitly labelled as spanning every case.
-
     if case_id is not None:
         risk_report = compute_case_risk_from_rows(
             case_entities,
@@ -754,49 +779,53 @@ def stats(
             for e in case_entities
         )
 
+    # Database-derived case statistics across the entire case portfolio
+    total_cases_count = db.query(Case).count()
+    solved_cases_count = db.query(Case).filter(
+        Case.status.ilike("solved")
+    ).count()
+    pending_cases_count = db.query(Case).filter(
+        Case.status.ilike("pending")
+    ).count()
+    active_cases_count = db.query(Case).filter(
+        Case.status.ilike("open") | Case.status.ilike("active") | Case.status.ilike("pending")
+    ).count()
+
+    selected_case_info = None
+    if case:
+        selected_case_info = {
+            "id": case.id,
+            "title": case.title,
+            "reference_id": case.reference_id,
+            "status": case.status,
+            "risk": case.risk,
+            "description": case.description,
+        }
+
     payload = {
-        "total_cases": (
-            1 if case_id is not None
-            else db.query(Case).count()
-        ),
-
-        "solved_cases": (
-            1
-            if case_id is not None
-            and case.status.lower() == "solved"
-            else 0
-            if case_id is not None
-            else db.query(Case).filter(
-                Case.status.ilike("solved")
-            ).count()
-        ),
-
-        "pending_cases": (
-            1
-            if case_id is not None
-            and case.status.lower() == "pending"
-            else 0
-            if case_id is not None
-            else db.query(Case).filter(
-                Case.status.ilike("pending")
-            ).count()
-        ),
+        # Total Cases must always reflect the total cases in the database,
+        # never collapsed to 1 simply because a single case is currently selected.
+        "total_cases": total_cases_count,
+        "active_cases": active_cases_count,
+        "solved_cases": solved_cases_count,
+        "pending_cases": pending_cases_count,
+        "selected_case": selected_case_info,
 
         "high_risk_entities": high_risk_count,
-
         "active_leads": len(relationships),
-
         "entities": len(case_entities),
-
         "evidence_documents": len(documents),
 
         "integrity_verified": sum(
             record.status == "VERIFIED"
             for record in integrity_records
         ),
+        "integrity_pending": sum(
+            record.status != "VERIFIED"
+            for record in integrity_records
+        ),
 
         "role": user.role,
-
         "case_id": case_id,
 
         # Computed case risk, kept separate from the manually recorded case label
@@ -837,16 +866,135 @@ def stats(
     # Security posture counters are oversight data. Roles without Security
     # Center access do not receive them instead of leaking platform posture.
     if has_permission(user.role, PERM_SECURITY_VIEW):
-
         payload["ledger_blocks"] = db.query(BlockchainBlock).count()
-
         payload["security_events"] = db.query(SecurityEvent).count()
-
         payload["failed_logins"] = db.query(SecurityEvent).filter(
             SecurityEvent.event_type == "FAILED_LOGIN"
         ).count()
 
     return payload
+
+
+@app.get("/api/entities")
+def entities_api(
+    request: Request,
+    case_id: int | None = None,
+    user: User = Depends(require_permission(PERM_ENTITY_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """List entities with deterministic resolution metadata and case-scoped risk."""
+    rel_query = db.query(Relationship)
+    if case_id is not None:
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        entities = get_entities(db, case_id)
+        rels = rel_query.filter(Relationship.case_id == case_id).all()
+        risk_report = compute_case_risk_from_rows(entities, rels, case=case, case_id=case_id)
+        entity_risk = risk_report["entities"]
+        all_rels = rels
+    else:
+        entities = db.query(Entity).all()
+        entity_risk = {}
+        all_rels = rel_query.all()
+
+    rel_counts = {}
+    for r in all_rels:
+        if r.source:
+            rel_counts[r.source] = rel_counts.get(r.source, 0) + 1
+        if r.target:
+            rel_counts[r.target] = rel_counts.get(r.target, 0) + 1
+
+    result = []
+    for e in entities:
+        risk_entry = entity_risk.get(e.key) or {}
+        score = risk_entry.get("score") if risk_entry else float(e.risk or 0.0)
+        band = risk_entry.get("band") if risk_entry else risk_band(score)
+        result.append({
+            "id": e.id,
+            "key": e.key,
+            "label": e.label,
+            "name": e.name,
+            "risk": score,
+            "risk_band": band,
+            "phone": getattr(e, "phone", None) or "",
+            "email": getattr(e, "email", None) or "",
+            "account": getattr(e, "account", None) or "",
+            "vehicle": getattr(e, "vehicle", None) or "",
+            "identifier": getattr(e, "identifier", None) or "",
+            "resolution_status": getattr(e, "resolution_status", None) or "NEW_ENTITY",
+            "match_reason": getattr(e, "match_reason", None) or "",
+            "case_id": getattr(e, "case_id", None),
+            "relationships_count": rel_counts.get(e.key, 0),
+            "image": entity_photo_url(e.key, getattr(e, "image_path", "")),
+        })
+    return result
+
+
+@app.get("/api/relationships")
+def relationships_api(
+    request: Request,
+    case_id: int | None = None,
+    user: User = Depends(require_permission(PERM_GRAPH_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """List relationships with connection metadata and case isolation."""
+    query = db.query(Relationship)
+    if case_id is not None:
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        query = query.filter(Relationship.case_id == case_id)
+    relationships = query.all()
+
+    keys = set()
+    for r in relationships:
+        if r.source:
+            keys.add(r.source)
+        if r.target:
+            keys.add(r.target)
+
+    entity_map = {}
+    if keys:
+        for ent in db.query(Entity).filter(Entity.key.in_(list(keys))).all():
+            entity_map[ent.key] = {
+                "name": ent.name,
+                "label": ent.label,
+                "phone": getattr(ent, "phone", None) or "",
+                "account": getattr(ent, "account", None) or "",
+            }
+
+    return [
+        {
+            "id": r.id,
+            "source": r.source,
+            "source_info": entity_map.get(r.source, {"name": r.source, "label": "Entity"}),
+            "target": r.target,
+            "target_info": entity_map.get(r.target, {"name": r.target, "label": "Entity"}),
+            "relation": r.relation,
+            "timestamp": r.timestamp,
+            "amount": r.amount,
+            "case_id": r.case_id,
+        }
+        for r in relationships
+    ]
+
+
+@app.get("/api/risk")
+def risk_api(
+    request: Request,
+    case_id: int | None = None,
+    user: User = Depends(require_permission(PERM_CASE_VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Return explainable risk intelligence for the selected case."""
+    from .services.risk_service import compute_case_risk
+    if case_id is not None:
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        return compute_case_risk(db, case_id=case_id, case=case)
+    return compute_case_risk(db, case_id=None)
 
 
 @app.get("/api/graph")
@@ -876,17 +1024,23 @@ def cases_api(
         .all()
     )
 
-    return [
-        {
+    result = []
+    for c in cases:
+        doc_count = db.query(Document).filter(Document.case_id == c.id).count()
+        rel_count = db.query(Relationship).filter(Relationship.case_id == c.id).count()
+        ent_count = len(get_entities(db, c.id))
+        result.append({
             "id": c.id,
             "reference_id": c.reference_id,
             "title": c.title,
             "status": c.status,
             "risk": c.risk,
             "description": c.description or "",
-        }
-        for c in cases
-    ]
+            "evidence_count": doc_count,
+            "entity_count": ent_count,
+            "relationship_count": rel_count,
+        })
+    return result
 
 
 @app.post("/api/cases")
@@ -978,7 +1132,112 @@ async def create_case(
     }
 
 
+@app.delete("/api/cases/{case_id}")
+async def delete_case(
+    case_id: int,
+    request: Request,
+    user: User = Depends(require_permission(PERM_CASE_DELETE)),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove an investigation case and its associated investigation data.
+    Enforces RBAC authorization (case:delete) and CSRF protection.
+    Cascade-removes case-scoped relationships, documents, integrity records, RAG chunks,
+    and orphan entities while preserving the immutable tamper-evident audit ledger.
+    """
+    require_csrf(request)
+
+    case = db.query(Case).filter(Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail=f"Case #{case_id} not found")
+
+    case_ref = case.reference_id or f"CL-{case.id:03d}"
+    case_title = case.title
+
+    # 1. Collect all documents for this case
+    docs = db.query(Document).filter(Document.case_id == case.id).all()
+    doc_ids = [d.id for d in docs]
+
+    # 2. Delete EvidenceIntegrity records for these documents
+    if doc_ids:
+        db.query(EvidenceIntegrity).filter(EvidenceIntegrity.document_id.in_(doc_ids)).delete(synchronize_session=False)
+
+    # 3. Delete DocumentChunk records (case RAG vector store)
+    db.query(DocumentChunk).filter(DocumentChunk.case_id == case.id).delete(synchronize_session=False)
+
+    # 4. Identify entity keys in this case's graph before removing relationships
+    case_rels = db.query(Relationship).filter(Relationship.case_id == case.id).all()
+    candidate_entity_keys = set()
+    for r in case_rels:
+        if r.source:
+            candidate_entity_keys.add(r.source)
+        if r.target:
+            candidate_entity_keys.add(r.target)
+
+    # 5. Delete all relationships for this case
+    db.query(Relationship).filter(Relationship.case_id == case.id).delete(synchronize_session=False)
+
+    # 6. Delete all documents for this case
+    db.query(Document).filter(Document.case_id == case.id).delete(synchronize_session=False)
+
+    # 7. Delete case node entities
+    case_node_keys = {f"CASE:{case_ref}", f"CASE:{case.id}", f"CASE:{case_title}"}
+    db.query(Entity).filter(Entity.key.in_(case_node_keys)).delete(synchronize_session=False)
+
+    # 8. Clean up orphan entities created solely for this case that have no relationships left in any case
+    if candidate_entity_keys:
+        remaining_rels = db.query(Relationship.source, Relationship.target).filter(
+            (Relationship.source.in_(candidate_entity_keys)) | (Relationship.target.in_(candidate_entity_keys))
+        ).all()
+        active_keys = set()
+        for s, t in remaining_rels:
+            if s:
+                active_keys.add(s)
+            if t:
+                active_keys.add(t)
+
+        orphans = (candidate_entity_keys - active_keys) - case_node_keys
+        if orphans:
+            db.query(Entity).filter(
+                (Entity.key.in_(orphans)) & ((Entity.case_id == case.id) | (Entity.case_id.is_(None)))
+            ).delete(synchronize_session=False)
+
+    # Also clean up any entities explicitly linked to this case_id with no relationships
+    orphan_case_entities = db.query(Entity).filter(Entity.case_id == case.id).all()
+    for oce in orphan_case_entities:
+        has_any_rel = db.query(Relationship).filter(
+            (Relationship.source == oce.key) | (Relationship.target == oce.key)
+        ).first()
+        if not has_any_rel:
+            db.delete(oce)
+
+    # 9. Invalidate RAG assistant cache for this case
+    invalidate_case_cache(case.id)
+
+    # 10. Record immutable audit event and block in ledger
+    audit(
+        db,
+        user,
+        "CASE_DELETED",
+        case_ref,
+        f"case_id={case.id}; title={case_title}",
+        request,
+    )
+
+    # 11. Delete the case itself and commit
+    db.delete(case)
+    db.commit()
+
+    return {
+        "ok": True,
+        "message": f"Case '{case_title}' (#{case_id}) and its associated investigation data were successfully removed.",
+        "case_id": case_id,
+        "title": case_title,
+    }
+
+
 # NOTE: the entity photo routes are declared before the catch-all entity detail
+
 # route below. FastAPI matches routes in declaration order, so a request such as
 # /api/entity/Person:foo/photo would otherwise be captured by
 # /api/entity/{entity_key:path} as the key "Person:foo/photo".
@@ -1092,6 +1351,13 @@ def entity_details_api(
 
     relationships = relationship_query.all()
 
+    # Case isolation: an entity requested within a case MUST belong to that case.
+    if case_id is not None and not relationships:
+        raise HTTPException(
+            status_code=404,
+            detail="Entity not found in the selected case.",
+        )
+
     # Risk is scored over the whole investigation, not only over the entity's own
     # connections, so the case's membership is resolved the same way every other
     # case-scoped surface resolves it. With no case selected there is no
@@ -1147,12 +1413,8 @@ def entity_details_api(
             if other:
                 case_rows.append({"key": case_key, "title": other.name})
 
-    # The graph stores case membership as contextual relationships. Also expose
-    # the default investigation case when the entity has no explicit case edge.
-    if not case_rows:
-        default_case = db.query(Case).filter(Case.title == "Operation Blue Lantern").first()
-        if default_case:
-            case_rows.append({"key": f"CASE:{default_case.id}", "title": default_case.title})
+    if not case_rows and case_id is not None and case:
+        case_rows.append({"key": f"CASE:{case.reference_id or case.id}", "title": case.title})
 
     connections.sort(key=lambda x: (x["name"].lower(), x["relation"]))
 
@@ -1194,6 +1456,15 @@ def entity_details_api(
                 else stored_risk_basis(case_id)
             ),
             "risk_factors": risk_entry.get("factors", []),
+            "resolution": {
+                "status": getattr(entity, "resolution_status", None) or "NEW_ENTITY",
+                "reason": getattr(entity, "match_reason", None) or "",
+            },
+            "phone": getattr(entity, "phone", None) or "",
+            "email": getattr(entity, "email", None) or "",
+            "account": getattr(entity, "account", None) or "",
+            "vehicle": getattr(entity, "vehicle", None) or "",
+            "identifier": getattr(entity, "identifier", None) or "",
             # Authorized endpoint only; never the storage path or a public URL.
             "image": entity_photo_url(entity.key, entity.image_path),
         },
@@ -1247,6 +1518,10 @@ def documents_api(
             for c in db.query(Case).filter(Case.id.in_(case_ids)).all()
         }
 
+    chunk_docs = {
+        row[0] for row in db.query(DocumentChunk.document_id).filter(DocumentChunk.document_id.in_([d.id for d in docs])).distinct().all()
+    } if docs else set()
+
     return [
         {
             "id": d.id,
@@ -1276,9 +1551,133 @@ def documents_api(
                 if integrity.get(d.id)
                 else "NOT_CHECKED"
             ),
+            "rag_indexed": d.id in chunk_docs,
         }
         for d in docs
     ]
+
+
+@app.get("/api/documents/{document_id}")
+def get_document_details(
+    document_id: int,
+    request: Request,
+    case_id: int | None = None,
+    _user: User = Depends(require_permission(PERM_EVIDENCE_VIEW)),
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Evidence document not found")
+
+    if case_id is not None and doc.case_id != case_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Evidence does not belong to the selected case."
+        )
+
+    case = db.query(Case).filter(Case.id == doc.case_id).first() if doc.case_id else None
+    integrity = db.query(EvidenceIntegrity).filter(EvidenceIntegrity.document_id == doc.id).first()
+    rag_chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
+
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "case_id": doc.case_id,
+        "case_reference": case.reference_id if case else None,
+        "case_title": case.title if case else None,
+        "doc_type": doc.doc_type,
+        "data_category": doc.data_category,
+        "file_extension": doc.file_extension,
+        "file_size": doc.file_size,
+        "extraction_method": doc.extraction_method,
+        "content_preview": (doc.content or "")[:2000],
+        "structured_preview": doc.structured_preview or "",
+        "status": doc.status,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "sha256": integrity.sha256 if integrity else None,
+        "integrity_status": integrity.status if integrity else "NOT_CHECKED",
+        "verified_at": integrity.verified_at.isoformat() if integrity and integrity.verified_at else None,
+        "rag_chunks_count": rag_chunks,
+        "rag_indexed": rag_chunks > 0,
+    }
+
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document_api(
+    document_id: int,
+    request: Request,
+    case_id: int | None = None,
+    user: User = Depends(require_permission(PERM_EVIDENCE_INGEST)),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove an evidence document, associated integrity records, RAG embeddings,
+    and stored disk file while recording an immutable audit event and ledger block.
+    Enforces RBAC authorization (evidence:ingest) and CSRF protection.
+    """
+    require_csrf(request)
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Evidence document not found")
+
+    if case_id is not None and doc.case_id != case_id:
+        audit(
+            db,
+            user,
+            "EVIDENCE_DELETE_DENIED",
+            str(document_id),
+            f"requested case_id={case_id}; document case_id={doc.case_id}",
+            request,
+            "WARNING",
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Evidence does not belong to the selected case."
+        )
+
+    doc_case_id = doc.case_id
+    filename = doc.filename
+
+    # Delete EvidenceIntegrity record and physical file
+    integrity = db.query(EvidenceIntegrity).filter(EvidenceIntegrity.document_id == doc.id).first()
+    if integrity:
+        try:
+            stored_p = resolve_storage_reference(integrity.stored_path)
+            if stored_p.is_file():
+                stored_p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        db.delete(integrity)
+
+    # Delete DocumentChunk records (RAG embeddings)
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete(synchronize_session=False)
+
+    # Delete Document
+    db.delete(doc)
+
+    # Invalidate RAG cache for this case
+    if doc_case_id:
+        invalidate_case_cache(doc_case_id)
+
+    # Audit & Ledger
+    audit(
+        db,
+        user,
+        "EVIDENCE_DELETED",
+        filename,
+        f"document_id={document_id}; case_id={doc_case_id}",
+        request,
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "message": f"Evidence '{filename}' (#{document_id}) removed successfully.",
+        "document_id": document_id,
+        "case_id": doc_case_id,
+    }
 
 
 def resolve_case_id(form_value, request: Request) -> int | None:
@@ -1384,7 +1783,7 @@ async def upload(
                 content, extraction_method = read_document(str(path))
                 metadata = {"characters": len(content), "detected_type": chosen_type}
                 structured_preview = ""
-                known_entities = [{"key": e.key, "label": e.label, "name": e.name} for e in db.query(Entity).all()]
+                known_entities = [{"key": e.key, "label": e.label, "name": e.name} for e in get_entities(db, case_id=case.id)]
                 entities = extract_entities(content, known_entities)
                 relationships = extract_relationships(content, known_entities)
 
@@ -1452,6 +1851,16 @@ async def upload(
 
             db.commit()
 
+            # RAG Indexing: Chunk and embed document for semantic retrieval.
+            # Safe and non-blocking: per Section 30, any indexing failure must never
+            # corrupt evidence integrity or roll back already-persisted evidence.
+            try:
+                from .services.rag_service import index_document
+                index_document(db, document)
+                db.commit()
+            except Exception:
+                db.rollback()
+
             for e in db.query(Entity).all():
                 graph.sync_entity(e)
             for r in db.query(Relationship).all():
@@ -1471,7 +1880,7 @@ async def upload(
                 "entities_added": len(entities),
                 "relationships_added": len(relationships),
             }
-            result.update(metadata)
+            result.update({k: v for k, v in metadata.items() if k != "records"})
             results.append(result)
         except Exception as exc:
             if "path" in locals() and path.exists():
@@ -1524,6 +1933,25 @@ def chat(
     audit(db, user, "GRAPH_QUERY", "ASSISTANT", req.question[:500], request)
     db.commit()
     return result
+
+
+@app.post("/api/assistant/reindex")
+def reindex_assistant(
+    request: Request,
+    case_id: int | None = None,
+    user: User = Depends(require_permission(PERM_EVIDENCE_INGEST)),
+    db: Session = Depends(get_db),
+):
+    require_csrf(request)
+    from .services.rag_service import index_case_documents
+    target_case_id = resolve_case_id(str(case_id) if case_id else None, request)
+    if target_case_id is None:
+        raise HTTPException(status_code=400, detail="Active case required for indexing.")
+    count = index_case_documents(db, target_case_id)
+    audit(db, user, "RAG_REINDEX", f"case_{target_case_id}", f"chunks_indexed={count}", request)
+    db.commit()
+    return {"ok": True, "case_id": target_case_id, "chunks_indexed": count}
+
 
 
 @app.post("/api/path")

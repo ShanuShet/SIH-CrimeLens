@@ -152,7 +152,7 @@ def _canonical_key(label, identifier):
 # ENTITY CREATION
 # ============================================================
 
-def _entity(label, identifier, name=None):
+def _entity(label, identifier, name=None, phone=None, email=None, account=None, vehicle=None, explicit_id=None):
     identifier = _clean(identifier)
 
     if not identifier:
@@ -163,15 +163,26 @@ def _entity(label, identifier, name=None):
     if not key:
         return None
 
-    return {
+    res = {
         "key": key,
         "label": label,
         "name": _clean(name) or identifier,
     }
+    if phone:
+        res["phone"] = _clean(phone)
+    if email:
+        res["email"] = _clean(email)
+    if account:
+        res["account"] = _clean(account)
+    if vehicle:
+        res["vehicle"] = _clean(vehicle)
+    if explicit_id:
+        res["identifier"] = _clean(explicit_id)
+    return res
 
 
-def _add_entity(entity_list, seen, label, identifier, name=None):
-    entity = _entity(label, identifier, name)
+def _add_entity(entity_list, seen, label, identifier, name=None, phone=None, email=None, account=None, vehicle=None, explicit_id=None):
+    entity = _entity(label, identifier, name, phone, email, account, vehicle, explicit_id)
 
     if not entity:
         return
@@ -294,6 +305,16 @@ def _parse_entity_master(rows):
         ]
     )
 
+    email_col = _find_column(
+        columns,
+        [
+            "email",
+            "email_address",
+            "mail",
+        ]
+    )
+
+
     # --------------------------------------------------------
     # Relationship columns
     # --------------------------------------------------------
@@ -370,7 +391,12 @@ def _parse_entity_master(rows):
                 seen,
                 "Person",
                 entity_id or name,
-                name
+                name,
+                phone=row.get(phone_col) if phone_col else None,
+                email=row.get(email_col) if email_col else None,
+                account=row.get(account_col) if account_col else None,
+                vehicle=row.get(vehicle_col) if vehicle_col else None,
+                explicit_id=entity_id or None,
             )
 
         # ---------------- PHONE ----------------
@@ -485,7 +511,12 @@ def _parse_entity_master(rows):
                 seen,
                 "Person",
                 person_identifier,
-                name or person_identifier
+                name or person_identifier,
+                phone=row.get(phone_col) if phone_col else None,
+                email=row.get(email_col) if email_col else None,
+                account=row.get(account_col) if account_col else None,
+                vehicle=row.get(vehicle_col) if vehicle_col else None,
+                explicit_id=person_identifier if person_identifier != (name or person_identifier) else (entity_id or None),
             )
 
     # ========================================================
@@ -621,6 +652,66 @@ def _parse_entity_master(rows):
             "timestamp": "",
             "amount": None,
         })
+
+    # Also link Person to phone, account, vehicle, location on the same row if not already linked
+    for row in rows:
+        p_val = _clean(row.get(person_id_col)) if person_id_col else ""
+        if not p_val:
+            p_val = _clean(row.get(id_col)) if id_col else ""
+        if not p_val:
+            p_val = _clean(row.get(name_col)) if name_col else ""
+        person_key = lookup.get(p_val.lower()) if p_val else None
+
+        if person_key and person_key.startswith("PERSON:"):
+            ph = _clean(row.get(phone_col)) if phone_col else ""
+            if ph:
+                ph_key = lookup.get(ph.lower()) or _canonical_key("PhoneNumber", ph)
+                if ph_key and ph_key != person_key:
+                    if not any(r["source"] == person_key and r["target"] == ph_key for r in relationships):
+                        relationships.append({
+                            "source": person_key,
+                            "target": ph_key,
+                            "relation": "USES_PHONE",
+                            "timestamp": "",
+                            "amount": None,
+                        })
+            acc = _clean(row.get(account_col)) if account_col else ""
+            if acc:
+                acc_key = lookup.get(acc.lower()) or _canonical_key("BankAccount", acc)
+                if acc_key and acc_key != person_key:
+                    if not any(r["source"] == person_key and r["target"] == acc_key for r in relationships):
+                        relationships.append({
+                            "source": person_key,
+                            "target": acc_key,
+                            "relation": "OWNS_ACCOUNT",
+                            "timestamp": "",
+                            "amount": None,
+                        })
+            veh = _clean(row.get(vehicle_col)) if vehicle_col else ""
+            if veh:
+                veh_key = lookup.get(veh.lower()) or _canonical_key("Vehicle", veh)
+                if veh_key and veh_key != person_key:
+                    if not any(r["source"] == person_key and r["target"] == veh_key for r in relationships):
+                        relationships.append({
+                            "source": person_key,
+                            "target": veh_key,
+                            "relation": "USES_VEHICLE",
+                            "timestamp": "",
+                            "amount": None,
+                        })
+            loc = _clean(row.get(location_col)) if location_col else ""
+            if loc:
+                loc_key = lookup.get(loc.lower()) or _canonical_key("Location", loc)
+                if loc_key and loc_key != person_key:
+                    if not any(r["source"] == person_key and r["target"] == loc_key for r in relationships):
+                        relationships.append({
+                            "source": person_key,
+                            "target": loc_key,
+                            "relation": "LOCATED_AT",
+                            "timestamp": "",
+                            "amount": None,
+                        })
+
 
     return entities, relationships
 
@@ -1182,6 +1273,13 @@ def parse_structured(path: str, doc_type: str, display_name: str | None = None):
                 rows
             )
 
+    # Collect all field names from all records to preserve schema knowledge
+    all_fields = []
+    for row in source_rows:
+        for col in row.keys():
+            if col not in all_fields:
+                all_fields.append(col)
+
     # ========================================================
     # METADATA
     # ========================================================
@@ -1189,6 +1287,8 @@ def parse_structured(path: str, doc_type: str, display_name: str | None = None):
     metadata = {
         "detected_type": normalized_type,
         "rows": len(source_rows),
+        "fields": all_fields,
+        "records": source_rows,
         "preview": source_rows[:10],
     }
 
@@ -1878,10 +1978,8 @@ def create_case_backbone(
     relationships,
 ):
     """
-    Connect all evidence entities to the investigation case.
-
-    This does NOT claim that entities are directly related.
-    It records that they belong to the same investigation.
+    Connect anchor or otherwise unconnected evidence entities to the contextual case node.
+    Real entity-to-entity connections are preserved as the primary investigative graph structure.
     """
 
     if not case_id:
@@ -1908,31 +2006,41 @@ def create_case_backbone(
         for r in relationships
     }
 
-    for entity in list(entities):
+    # Find entities that already participate in real entity-to-entity relationships
+    connected_entities = set()
+    for r in relationships:
+        s = r.get("source")
+        t = r.get("target")
+        rel = r.get("relation")
+        if rel != "PART_OF_CASE" and s and t and s != case_key and t != case_key:
+            connected_entities.add(s)
+            connected_entities.add(t)
 
+    for entity in list(entities):
         key = entity.get("key")
 
-        if not key:
+        if not key or key == case_key:
             continue
 
-        if key == case_key:
-            continue
+        label = str(entity.get("label") or "").lower()
 
-        relationship_key = (
-            key,
-            case_key,
-            "PART_OF_CASE"
-        )
+        # Connect primary anchors (Person or Incident) or otherwise disconnected entities to the case node
+        if label in {"person", "incident"} or key not in connected_entities:
+            relationship_key = (
+                key,
+                case_key,
+                "PART_OF_CASE"
+            )
 
-        if relationship_key in existing:
-            continue
+            if relationship_key in existing:
+                continue
 
-        relationships.append({
-            "source": key,
-            "target": case_key,
-            "relation": "PART_OF_CASE",
-            "timestamp": "",
-            "amount": None,
-        })
+            relationships.append({
+                "source": key,
+                "target": case_key,
+                "relation": "PART_OF_CASE",
+                "timestamp": "",
+                "amount": None,
+            })
 
-        existing.add(relationship_key)
+            existing.add(relationship_key)

@@ -39,6 +39,7 @@ KNOWN_ROLES = (
 
 PERM_CASE_VIEW = "case:view"
 PERM_CASE_CREATE = "case:create"
+PERM_CASE_DELETE = "case:delete"
 PERM_EVIDENCE_VIEW = "evidence:view"
 PERM_EVIDENCE_INGEST = "evidence:ingest"
 PERM_EVIDENCE_VERIFY = "evidence:verify"
@@ -53,6 +54,7 @@ PERM_LEDGER_VERIFY = "ledger:verify"
 PERMISSION_DESCRIPTIONS = {
     PERM_CASE_VIEW: "view case workspaces",
     PERM_CASE_CREATE: "create cases",
+    PERM_CASE_DELETE: "delete cases and associated investigation data",
     PERM_EVIDENCE_VIEW: "view the evidence register",
     PERM_EVIDENCE_INGEST: "ingest evidence",
     PERM_EVIDENCE_VERIFY: "verify evidence integrity",
@@ -77,6 +79,7 @@ ROLE_PERMISSIONS = {
     ROLE_INVESTIGATOR: frozenset({
         PERM_CASE_VIEW,
         PERM_CASE_CREATE,
+        PERM_CASE_DELETE,
         PERM_EVIDENCE_VIEW,
         PERM_EVIDENCE_INGEST,
         PERM_EVIDENCE_VERIFY,

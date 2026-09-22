@@ -3,253 +3,1067 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CrimeLens | Secure Investigation Platform</title>
+  <title>CrimeLens — Investigation Command Center</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
 </head>
-<body>
+<body data-initial-section="{{ initial_section | default('overview') }}">
+  <!-- Secure Sign-in Overlay -->
   <div id="loginOverlay" class="login-overlay">
     <div class="login-card">
       <div class="login-brand">
         <div class="brand-mark">CL</div>
         <div><b>CRIME LENS</b><span>SECURE INVESTIGATION PLATFORM</span></div>
       </div>
-      <div class="login-title">Investigator Sign In</div>
-      <p class="muted">Authenticated access is required for evidence, graph and security operations.</p>
+      <div class="login-title">Investigator Command Access</div>
+      <p class="muted">Authorized access is required to view case files, evidence graphs, and forensic ledgers.</p>
       <form id="loginForm">
-        <label>Username<input id="loginUsername" autocomplete="username" placeholder="admin@crimelens.local" required></label>
-        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••••" required></label>
-        <button class="primary wide" type="submit">SECURE SIGN IN</button>
+        <label>Investigator Identity / Email
+          <input id="loginUsername" autocomplete="username" placeholder="admin@crimelens.local" required>
+        </label>
+        <label>Passphrase
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••••" required>
+        </label>
+        <button class="primary wide" type="submit">AUTHENTICATE &amp; ENTER</button>
       </form>
       <div id="loginError" class="login-error"></div>
       <div class="demo-credentials">
-        <b>Demo access</b>
-        <span>Admin: admin@crimelens.local / Admin@12345</span>
-        <span>Investigator: investigator@crimelens.local / Invest@12345</span>
-        <span>Auditor: auditor@crimelens.local / Audit@12345</span>
+        <b>Authorized Roles</b>
+        <span>Admin: <code>admin@crimelens.local</code> / <code>Admin@12345</code></span>
+        <span>Investigator: <code>investigator@crimelens.local</code> / <code>Invest@12345</code></span>
+        <span>Auditor: <code>auditor@crimelens.local</code> / <code>Audit@12345</code></span>
+      </div>
+      <div class="public-return-link">
+        <a href="/">← Return to Public Platform Overview</a>
       </div>
     </div>
   </div>
 
+  <!-- Main Application Shell -->
   <div class="app-shell hidden" id="appShell">
+    <!-- Sidebar Navigation -->
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">CL</div>
-        <div><b>CRIME LENS</b><span>SECURE INVESTIGATION</span></div>
+        <div>
+          <b>CRIME LENS</b>
+          <span>INTELLIGENCE CENTER</span>
+        </div>
       </div>
 
       <div class="sidebar-scroll">
-        <div class="workspace-label">CASE WORKSPACE</div>
-        <button id="newCaseButton" class="new-case-button" data-permission="case:create"><span>＋</span> New Case</button>
+        <!-- Persistent Active Case Indicator in Sidebar -->
+        <div class="sidebar-active-case-box">
+          <div class="sidebar-case-header">
+            <span class="pulse-dot"></span>
+            <span>ACTIVE CASE</span>
+          </div>
+          <div class="sidebar-case-name" id="sidebarActiveCaseTitle">No case selected</div>
+          <div class="sidebar-case-meta" id="sidebarActiveCaseMeta">Select a case to isolate scope</div>
+          <div class="sidebar-case-actions">
+            <button type="button" class="btn-micro" id="switchCaseQuickBtn">Switch Case</button>
+            <button type="button" class="btn-micro-muted" id="clearCaseQuickBtn">Global View</button>
+          </div>
+        </div>
 
-        <div class="sidebar-group">
+        <div class="workspace-label">COMMAND CENTER</div>
+        <nav class="main-nav">
+          <button class="nav active" data-section="overview">
+            <span class="nav-icon">◈</span>
+            <span>Dashboard</span>
+          </button>
+        </nav>
+
+        <div class="workspace-label">INVESTIGATION</div>
+        <nav class="main-nav">
+          <button class="nav" data-section="casesSection" data-permission="case:view">
+            <span class="nav-icon">📁</span>
+            <span>Cases</span>
+          </button>
+          <button class="nav" data-section="evidenceSection" data-permission="evidence:view">
+            <span class="nav-icon">▣</span>
+            <span>Evidence Locker</span>
+          </button>
+          <button class="nav" data-section="entitiesSection" data-permission="entity:view">
+            <span class="nav-icon">👤</span>
+            <span>Entity Master</span>
+          </button>
+          <button class="nav" data-section="relationshipsSection" data-permission="graph:view">
+            <span class="nav-icon">🔗</span>
+            <span>Relationships</span>
+          </button>
+          <button class="nav" data-section="graphSection" data-permission="graph:view">
+            <span class="nav-icon">⌘</span>
+            <span>Investigation Graph</span>
+          </button>
+          <button class="nav" data-section="riskSection" data-permission="case:view">
+            <span class="nav-icon">⚡</span>
+            <span>Risk Analysis</span>
+          </button>
+        </nav>
+
+        <div class="workspace-label">INTELLIGENCE</div>
+        <nav class="main-nav">
+          <button class="nav" data-section="assistantSection" data-permission="assistant:query">
+            <span class="nav-icon">✦</span>
+            <span>Investigation Assistant</span>
+          </button>
+        </nav>
+
+        <div class="workspace-label">INTEGRITY &amp; AUDIT</div>
+        <nav class="main-nav">
+          <button class="nav" data-section="securitySection" data-permission="security:view">
+            <span class="nav-icon">◉</span>
+            <span>Security Center</span>
+          </button>
+          <button class="nav" data-section="ledgerSection" data-permission="ledger:view">
+            <span class="nav-icon">⛓</span>
+            <span>Evidence Ledger</span>
+          </button>
+        </nav>
+
+        <!-- Legacy Quick Switcher List Container for backward compatibility -->
+        <div class="sidebar-group" style="margin-top: 1rem;">
           <button class="sidebar-group-title dropdown-toggle" data-target="casesDropdown">
-            <span>CASES</span><span class="chevron">⌄</span>
+            <span>CASE SHORTCUTS</span><span class="chevron">⌄</span>
           </button>
           <div id="casesDropdown" class="sidebar-group-content open">
             <div id="sidebarCases" class="sidebar-list"></div>
           </div>
         </div>
-
-        <div class="sidebar-group">
-          <button class="sidebar-group-title dropdown-toggle" data-target="evidenceDropdown">
-            <span>EVIDENCE</span><span class="chevron">⌄</span>
-          </button>
-          <div id="evidenceDropdown" class="sidebar-group-content open">
-            <button class="sidebar-link" data-section="evidence" data-permission="evidence:view">Evidence Register</button>
-            <button class="sidebar-link" data-section="evidence" data-permission="evidence:ingest">Ingest Evidence</button>
-          </div>
-        </div>
-
-        <div class="sidebar-group">
-          <button class="sidebar-group-title dropdown-toggle" data-target="recordsDropdown">
-            <span>RECORDS</span><span class="chevron">⌄</span>
-          </button>
-          <div id="recordsDropdown" class="sidebar-group-content">
-            <button class="sidebar-link" data-section="graph" data-permission="graph:view">Entity Records</button>
-            <button class="sidebar-link" data-section="graph" data-permission="graph:view">Relationship Records</button>
-          </div>
-        </div>
-
-        <div class="workspace-label investigation-label">INVESTIGATION</div>
-        <nav class="main-nav">
-          <button class="nav active" data-section="overview">◈ <span>Overview</span></button>
-          <button class="nav" data-section="evidence" data-permission="evidence:view">▣ <span>Evidence</span></button>
-          <button class="nav" data-section="graph" data-permission="graph:view">⌘ <span>Entity Graph</span></button>
-          <button class="nav" data-section="assistant" data-permission="assistant:query">✦ <span>Intelligence Assistant</span></button>
-          <button class="nav" data-section="security" data-permission="security:view">◉ <span>Security Center</span></button>
-          <button class="nav" data-section="ledger" data-permission="ledger:view">⛓ <span>Evidence Ledger</span></button>
-        </nav>
       </div>
 
+      <!-- Sidebar Footer -->
       <div class="sidebar-bottom">
         <div class="user-mini">
           <div class="avatar" id="userAvatar">A</div>
-          <div><b id="currentUser">—</b><span id="currentRole">—</span></div>
+          <div>
+            <b id="currentUser">—</b>
+            <span id="currentRole" class="role-badge">—</span>
+          </div>
         </div>
-        <div class="system"><span class="dot"></span> SYSTEM PROTECTED</div>
-        <button class="logout" id="logoutButton">Sign out</button>
+        <div class="system-status-indicator">
+          <span class="dot"></span>
+          <span>SYSTEM ENCRYPTED</span>
+        </div>
+        <button class="logout" id="logoutButton">Sign Out</button>
       </div>
     </aside>
 
+    <!-- Main Content Area -->
     <main class="main-content">
-      <header>
-        <div class="header-copy">
-          <div class="eyebrow">PROJECT CRIME LENS / SECURE COMMAND CENTER</div>
-          <h1>Investigative Intelligence Platform</h1>
-          <p>Evidence ingestion, entity intelligence, graph analysis, security monitoring and tamper-evident audit.</p>
+      <!-- Persistent Top Header with Active Case Bar -->
+      <header class="top-command-bar">
+        <div class="header-left">
+          <div class="eyebrow">CRIMELENS / INVESTIGATION COMMAND CENTER</div>
+          <div class="header-title-row">
+            <h1 id="pageSectionTitle">Command Center Dashboard</h1>
+            <span class="active-scope-badge" id="caseScopeBadge">GLOBAL SCOPE</span>
+          </div>
         </div>
+
         <div class="header-right">
-          <div class="case-pill">ACTIVE CASE: <b id="activeCase">No case selected</b></div>
-          <div class="security-pill"><span class="status-dot"></span> SECURE SESSION</div>
+          <!-- Prominent Active Case Control -->
+          <div class="active-case-banner">
+            <div class="case-banner-label">INVESTIGATION CONTEXT</div>
+            <div class="case-banner-val">
+              <span id="activeCase">No case selected</span>
+              <button type="button" class="btn-case-switch" id="headerChangeCaseBtn">Change Case</button>
+            </div>
+          </div>
+
+          <div class="security-pill">
+            <span class="status-dot"></span>
+            <span>SECURE SESSION</span>
+          </div>
           <div class="clock" id="clock"></div>
         </div>
       </header>
 
+      <!-- ============================================================ -->
+      <!-- SECTION 1: COMMAND CENTER DASHBOARD (#overview) -->
+      <!-- ============================================================ -->
       <section id="overview" class="section">
         <div class="page-heading">
-          <div><h2>Investigation Overview</h2><p class="muted">Live view of the current evidence universe.</p></div>
-          <button class="secondary" id="refreshOverviewButton">↻ Refresh intelligence</button>
+          <div>
+            <h2>Operational Overview</h2>
+            <p class="muted">Live intelligence posture and case portfolio metrics.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="secondary" id="refreshOverviewButton">↻ Refresh Intelligence</button>
+            <button class="primary" id="dashboardNewCaseBtn" data-permission="case:create">＋ New Case</button>
+          </div>
         </div>
-        <div class="cards">
-          <div class="kpi"><span>TOTAL CASES</span><strong id="totalCases">—</strong><small>Active case universe</small></div>
-          <div class="kpi"><span>EVIDENCE FILES</span><strong id="evidenceDocuments">—</strong><small>Ingested artifacts</small></div>
-          <div class="kpi"><span>ENTITIES</span><strong id="entityTotal">—</strong><small>Resolved entities</small></div>
-          <div class="kpi"><span>RELATIONSHIPS</span><strong id="activeLeads">—</strong><small>Graph connections</small></div>
-          <div class="kpi danger-kpi"><span>HIGH-RISK ENTITIES</span><strong id="highRisk">—</strong><small>Risk score ≥ 70</small></div>
+
+        <!-- KPI Metrics Strip -->
+        <div class="kpi-deck">
+          <div class="kpi-card" id="cardTotalCases">
+            <div class="kpi-icon-wrap">📁</div>
+            <div class="kpi-content">
+              <span class="kpi-label">TOTAL CASES</span>
+              <strong class="kpi-val" id="totalCases">—</strong>
+              <small class="kpi-sub" id="subActiveCases">All portfolio cases</small>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon-wrap">📄</div>
+            <div class="kpi-content">
+              <span class="kpi-label">EVIDENCE FILES</span>
+              <strong class="kpi-val" id="evidenceDocuments">—</strong>
+              <small class="kpi-sub">Ingested artifacts</small>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon-wrap">👤</div>
+            <div class="kpi-content">
+              <span class="kpi-label">RESOLVED ENTITIES</span>
+              <strong class="kpi-val" id="entityTotal">—</strong>
+              <small class="kpi-sub">Distinct people, phones, accounts</small>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon-wrap">🔗</div>
+            <div class="kpi-content">
+              <span class="kpi-label">RELATIONSHIPS</span>
+              <strong class="kpi-val" id="activeLeads">—</strong>
+              <small class="kpi-sub">Graph connections</small>
+            </div>
+          </div>
+
+          <div class="kpi-card danger-kpi">
+            <div class="kpi-icon-wrap">🚨</div>
+            <div class="kpi-content">
+              <span class="kpi-label">HIGH-RISK ENTITIES</span>
+              <strong class="kpi-val" id="highRisk">—</strong>
+              <small class="kpi-sub">Risk score ≥ 70</small>
+            </div>
+          </div>
         </div>
+
+        <!-- Active Case Dossier Hero Banner -->
+        <div class="active-case-dossier-card" id="activeCaseDossierCard">
+          <div class="dossier-card-head">
+            <div class="dossier-tag">ACTIVE INVESTIGATION DOSSIER</div>
+            <div class="dossier-status-badge" id="dossierStatusBadge">PENDING</div>
+          </div>
+          <div class="dossier-card-body">
+            <div class="dossier-title-col">
+              <h3 id="dossierCaseTitle">No Active Case Selected</h3>
+              <p id="dossierCaseDesc">Select a case from the portfolio or create a new case workspace to focus investigation evidence and graph queries.</p>
+            </div>
+            <div class="dossier-stats-col">
+              <div class="dossier-stat-item">
+                <span>REFERENCE ID</span>
+                <b id="dossierCaseRef">—</b>
+              </div>
+              <div class="dossier-stat-item">
+                <span>CASE RISK RATING</span>
+                <b id="dossierCaseRisk">—</b>
+              </div>
+              <div class="dossier-stat-item">
+                <span>INVESTIGATION ACTIONS</span>
+                <div class="dossier-btn-group">
+                  <button type="button" class="primary btn-sm" id="dossierExploreGraphBtn">Open Graph</button>
+                  <button type="button" class="secondary btn-sm" id="dossierAskAssistantBtn">Consult Assistant</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Security & Audit Strip -->
         <div class="security-strip">
-          <div><span class="strip-label">EVIDENCE INTEGRITY</span><b id="integrityStatus">Checking…</b></div>
-          <div><span class="strip-label">LEDGER</span><b id="ledgerStatus">Checking…</b></div>
-          <div><span class="strip-label">FAILED LOGINS</span><b id="failedLogins">0</b></div>
-          <div><span class="strip-label">ROLE</span><b id="roleValue">—</b></div>
+          <div class="strip-item">
+            <span class="strip-label">EVIDENCE INTEGRITY</span>
+            <b id="integrityStatus">Checking…</b>
+          </div>
+          <div class="strip-item">
+            <span class="strip-label">CRYPTOGRAPHIC LEDGER</span>
+            <b id="ledgerStatus">Checking…</b>
+          </div>
+          <div class="strip-item">
+            <span class="strip-label">FAILED AUTH LOGS</span>
+            <b id="failedLogins">0</b>
+          </div>
+          <div class="strip-item">
+            <span class="strip-label">SESSION ROLE</span>
+            <b id="roleValue">—</b>
+          </div>
         </div>
+
+        <!-- Two Column Layout: Case Portfolio & Investigation Workflow -->
         <div class="grid2">
           <div class="panel">
-            <div class="panel-title"><b>CASE PORTFOLIO</b><span>LIVE</span></div>
+            <div class="panel-title">
+              <b>CASE PORTFOLIO</b>
+              <span class="panel-counter" id="portfolioCaseCount">LIVE</span>
+            </div>
             <div id="cases" class="case-list"></div>
           </div>
+
           <div class="panel">
-            <div class="panel-title"><b>INVESTIGATION PIPELINE</b><span>CONTROL FLOW</span></div>
-            <div class="flow">
-              <div><i>01</i><b>COLLECT</b><small>Evidence</small></div><div class="arrow">→</div>
-              <div><i>02</i><b>PREPARE</b><small>Parse / OCR</small></div><div class="arrow">→</div>
-              <div><i>03</i><b>EXTRACT</b><small>Entity / relation</small></div><div class="arrow">→</div>
-              <div><i>04</i><b>CONNECT</b><small>Evidence graph</small></div>
+            <div class="panel-title">
+              <b>INVESTIGATION PIPELINE</b>
+              <span>CONTROL FLOW</span>
             </div>
-            <div class="overview-note"><b>Security layer</b><span>Every evidence upload is SHA-256 fingerprinted and every security-sensitive action is recorded in a hash-linked audit ledger.</span></div>
+            <div class="flow">
+              <div class="flow-step">
+                <i>01</i>
+                <b>COLLECT</b>
+                <small>Evidence Ingestion</small>
+              </div>
+              <div class="arrow">→</div>
+              <div class="flow-step">
+                <i>02</i>
+                <b>RESOLVE</b>
+                <small>Multi-Signal Identity</small>
+              </div>
+              <div class="arrow">→</div>
+              <div class="flow-step">
+                <i>03</i>
+                <b>FUSE</b>
+                <small>Graph Topological Link</small>
+              </div>
+              <div class="arrow">→</div>
+              <div class="flow-step">
+                <i>04</i>
+                <b>ANALYZE</b>
+                <small>Risk &amp; Grounded RAG</small>
+              </div>
+            </div>
+            <div class="overview-note">
+              <b>Security and Chain of Custody:</b>
+              <span>Every evidence document is SHA-256 fingerprinted upon ingestion. All case deletions and security events are committed to a tamper-evident cryptographic blockchain ledger.</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="evidence" class="section hidden">
-        <div class="page-heading"><div><h2>Evidence Operations</h2><p class="muted">Upload, classify, fingerprint and verify authorized investigative artifacts.</p></div></div>
-        <div class="panel">
+      <!-- ============================================================ -->
+      <!-- SECTION 2: CASE MANAGEMENT UI (#casesSection) -->
+      <!-- ============================================================ -->
+      <section id="casesSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Case Management</h2>
+            <p class="muted">Active investigation workspaces, case files, and case isolation controls.</p>
+          </div>
+          <button class="primary" id="newCaseButton" data-permission="case:create"><span>＋</span> New Case Workspace</button>
+        </div>
+
+        <!-- Case Filter Bar -->
+        <div class="filter-toolbar">
+          <input type="text" id="caseSearchInput" class="filter-input" placeholder="Search case by name or reference ID…">
+          <div class="filter-pills" id="caseStatusFilters">
+            <button class="pill active" data-status="ALL">ALL CASES</button>
+            <button class="pill" data-status="OPEN">OPEN</button>
+            <button class="pill" data-status="PENDING">PENDING</button>
+            <button class="pill" data-status="SOLVED">SOLVED</button>
+            <button class="pill" data-status="CLOSED">CLOSED</button>
+          </div>
+        </div>
+
+        <!-- Case Cards Grid -->
+        <div id="casesDossierGrid" class="case-dossier-grid">
+          <div class="loading-box">Loading case files…</div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- SECTION 3: EVIDENCE LOCKER UI (#evidenceSection) -->
+      <!-- ============================================================ -->
+      <section id="evidenceSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Evidence Locker</h2>
+            <p class="muted">Where investigation evidence is stored, inspected, verified, and traced.</p>
+          </div>
+          <div class="evidence-scope-box">
+            <span class="muted" style="font-size: 11px;">Active Case:</span>
+            <span class="active-case-tag" id="evidenceCaseContextBadge">Operation Blue Lantern</span>
+          </div>
+        </div>
+
+        <!-- Evidence Management Toolbar -->
+        <div class="evidence-toolbar">
+          <div class="toolbar-left">
+            <input type="text" id="evidenceSearchInput" class="filter-input" placeholder="Search evidence filename, SHA-256, type…">
+            <select id="evidenceTypeFilter" class="filter-select">
+              <option value="ALL">All Document Types</option>
+              <option value="PDF">PDF Documents</option>
+              <option value="CSV">CSV Spreadsheets</option>
+              <option value="XLSX">Excel Sheets</option>
+              <option value="TXT">Text Records</option>
+              <option value="JSON">JSON Records</option>
+              <option value="FIR">FIR Reports</option>
+              <option value="CDR">CDR Call Records</option>
+              <option value="FINANCIAL">Financial Statements</option>
+            </select>
+            <button type="button" class="secondary" id="evidenceRefreshBtn">↻ Refresh</button>
+          </div>
+          <div class="toolbar-right" data-permission="evidence:ingest">
+            <button type="button" class="primary" id="triggerUploadEvidenceBtn">＋ Ingest Evidence</button>
+          </div>
+        </div>
+
+        <!-- Collapsible Ingestion Panel -->
+        <div class="panel hidden" id="evidenceUploadPanel">
+          <div class="panel-title">
+            <b>INGEST NEW EVIDENCE ARTIFACTS</b>
+            <button class="icon-button" id="closeUploadPanelBtn">×</button>
+          </div>
           <div class="ingest-banner">
-            <div><b>STRUCTURED</b><span>CSV · XLSX · XLS · JSON</span></div>
-            <div><b>UNSTRUCTURED</b><span>PDF · DOCX · TXT · JPG · PNG</span></div>
-            <div><b>SECURITY</b><span>SHA-256 · size limit · audit</span></div>
+            <div><b>STRUCTURED ARTIFACTS</b><span>CSV · XLSX · XLS · JSON</span></div>
+            <div><b>UNSTRUCTURED ARTIFACTS</b><span>PDF · DOCX · TXT · JPG · PNG</span></div>
+            <div><b>FORENSIC INTEGRITY</b><span>SHA-256 · Size Gated · Tamper-Evident</span></div>
           </div>
           <div class="upload-controls" data-permission="evidence:ingest">
-            <label>Evidence category
+            <label>Evidence Classification
               <select id="docType">
-                <option value="AUTO">Auto detect</option><option value="ENTITY_MASTER">Entity Master</option>
-                <option value="FIR">FIR / Police Report</option><option value="SURVEILLANCE">Surveillance Report</option>
-                <option value="CRIMINAL_RECORD">Criminal Record</option><option value="CDR">Call Detail Record</option>
-                <option value="FINANCIAL">Financial Transaction Log</option><option value="OTHER">Other Evidence</option>
+                <option value="AUTO">Auto detect format</option>
+                <option value="ENTITY_MASTER">Entity Master / Identity Record</option>
+                <option value="FIR">FIR / Police Incident Report</option>
+                <option value="SURVEILLANCE">Surveillance Report</option>
+                <option value="CRIMINAL_RECORD">Criminal Record History</option>
+                <option value="CDR">Call Detail Record (CDR)</option>
+                <option value="FINANCIAL">Financial Transaction Statement</option>
+                <option value="OTHER">Other Evidence Artifact</option>
               </select>
             </label>
-            <label class="file-picker">Choose evidence files
+            <label class="file-picker">Choose Evidence Artifacts
               <input type="file" id="evidenceFiles" multiple accept=".pdf,.docx,.txt,.csv,.xlsx,.xls,.json,.jpg,.jpeg,.png">
             </label>
             <button class="primary" id="uploadEvidenceButton">INGEST EVIDENCE</button>
           </div>
           <div id="uploadResult" class="result">No files ingested in this session.</div>
-          <div class="panel-title sub"><b>EVIDENCE REGISTER</b><span>LAST 50</span></div>
-          <div id="documentList" class="document-list">Loading…</div>
+        </div>
+
+        <!-- Evidence Locker List/Table -->
+        <div class="panel">
+          <div class="panel-title sub">
+            <b>EVIDENCE LOCKER REPOSITORY</b>
+            <span id="evidenceTableCount">0 ARTIFACTS</span>
+          </div>
+          <div id="documentList" class="document-list">Loading evidence…</div>
         </div>
       </section>
 
-      <section id="graph" class="section hidden">
+      <!-- ============================================================ -->
+      <!-- SECTION 4: ENTITY MASTER UI (#entitiesSection) -->
+      <!-- ============================================================ -->
+      <section id="entitiesSection" class="section hidden">
         <div class="page-heading">
-          <div><h2>Entity Relationship Graph</h2><p class="muted">Explore evidence-backed connections across people, phones, accounts, vehicles and locations.</p></div>
-          <div class="button-row"><button class="secondary" id="resetGraphButton">Reset graph</button><button class="secondary" id="fitGraphButton">Fit</button></div>
+          <div>
+            <h2>Entity Intelligence Master</h2>
+            <p class="muted">Multi-signal deterministic entity resolution register. Identical names are kept separate based on identifiers.</p>
+          </div>
+          <div class="heading-actions">
+            <input type="text" id="entitiesSearchInput" class="filter-input" placeholder="Search people, phones, accounts, vehicles…">
+          </div>
         </div>
+
+        <!-- Entity Type Filters -->
+        <div class="entity-type-filter-bar">
+          <button class="entity-filter-chip active" data-type="ALL">ALL ENTITIES</button>
+          <button class="entity-filter-chip" data-type="Person">👤 People</button>
+          <button class="entity-filter-chip" data-type="PhoneNumber">📞 Phone Numbers</button>
+          <button class="entity-filter-chip" data-type="BankAccount">🏦 Bank Accounts</button>
+          <button class="entity-filter-chip" data-type="Vehicle">🚗 Vehicles</button>
+          <button class="entity-filter-chip" data-type="Location">📍 Locations</button>
+          <button class="entity-filter-chip" data-type="Incident">🚨 Incidents</button>
+        </div>
+
+        <div class="panel">
+          <div class="table-wrap">
+            <table class="intel-table" id="entitiesTable">
+              <thead>
+                <tr>
+                  <th data-sort="name" class="sortable-th">ENTITY / NAME <span class="sort-icon" id="sortIconName"></span></th>
+                  <th data-sort="type" class="sortable-th">TYPE <span class="sort-icon" id="sortIconType"></span></th>
+                  <th>IDENTIFIERS (PHONE / EMAIL / ACCOUNT / VEHICLE)</th>
+                  <th data-sort="relationships" class="sortable-th">RELATIONSHIPS <span class="sort-icon" id="sortIconRelationships"></span></th>
+                  <th data-sort="resolution" class="sortable-th">RESOLUTION STATUS <span class="sort-icon" id="sortIconResolution"></span></th>
+                  <th data-sort="risk" class="sortable-th">RISK SCORE <span class="sort-icon" id="sortIconRisk">▼</span></th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="entitiesTableBody">
+                <tr><td colspan="7" class="muted text-center">Loading entity intelligence…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- SECTION 5: RELATIONSHIPS UI (#relationshipsSection) -->
+      <!-- ============================================================ -->
+      <section id="relationshipsSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Intelligence Connections &amp; Relationships</h2>
+            <p class="muted">Evidence-backed transactional, communication, and associative links across entities.</p>
+          </div>
+          <input type="text" id="relationshipSearchInput" class="filter-input" placeholder="Filter by source, target, or relationship type…">
+        </div>
+
+        <div class="panel">
+          <div class="table-wrap">
+            <table class="intel-table" id="relationshipsTable">
+              <thead>
+                <tr>
+                  <th>SOURCE ENTITY</th>
+                  <th>RELATIONSHIP TYPE</th>
+                  <th>TARGET ENTITY</th>
+                  <th>AMOUNT / VOLUME</th>
+                  <th>TIMESTAMP</th>
+                  <th>CASE ID</th>
+                </tr>
+              </thead>
+              <tbody id="relationshipsTableBody">
+                <tr><td colspan="6" class="muted text-center">Loading connections…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- SECTION 6: INVESTIGATION GRAPH UI (#graphSection) -->
+      <!-- ============================================================ -->
+      <section id="graphSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Investigation Relationship Graph</h2>
+            <p class="muted">Force-directed topological network visualization of people, phones, accounts, vehicles, and locations.</p>
+          </div>
+        </div>
+
         <div class="graph-layout">
-          <aside class="entity-sidebar">
-            <div class="entity-header"><b>EVIDENCE ENTITIES</b><span id="entityCount">0</span></div>
-            <input id="entitySearch" class="entity-search" placeholder="Search entities…">
-            <div class="entity-filters">
-              <button class="entity-filter active" data-type="ALL">ALL</button>
-              <button class="entity-filter" data-type="Person">👤</button>
-              <button class="entity-filter" data-type="PhoneNumber">📞</button>
-              <button class="entity-filter" data-type="BankAccount">🏦</button>
-              <button class="entity-filter" data-type="Vehicle">🚗</button>
-              <button class="entity-filter" data-type="Location">📍</button>
-              <button class="entity-filter" data-type="Incident">🚨</button>
+          <!-- Consolidated Left Control Bar & Entity Sidebar -->
+          <aside class="entity-sidebar graph-control-sidebar" id="graphControlSidebar">
+            <!-- CASE CONTROLS -->
+            <div class="graph-control-group">
+              <div class="control-group-title">INVESTIGATION CASE</div>
+              <div class="graph-case-indicator">
+                <span class="active-dot"></span>
+                <b id="graphActiveCaseTitle">Operation Blue Lantern</b>
+              </div>
+              <button type="button" class="secondary btn-xs" id="graphChangeCaseBtn" style="margin-top: 6px; width: 100%;">Switch Case Context</button>
+            </div>
+
+            <!-- GRAPH ACTIONS -->
+            <div class="graph-control-group">
+              <div class="control-group-title">GRAPH TOOLS</div>
+              <div class="graph-btn-grid">
+                <button class="secondary btn-xs" id="fitGraphButton" title="Recenter and fit all nodes">Fit</button>
+                <button class="secondary btn-xs" id="resetGraphButton" title="Reset layout and filters">Reset</button>
+                <button class="secondary btn-xs" id="zoomInGraphButton" title="Zoom in">＋ Zoom</button>
+                <button class="secondary btn-xs" id="zoomOutGraphButton" title="Zoom out">－ Zoom</button>
+                <button class="secondary btn-xs" id="refreshGraphButton" title="Reload active case graph">↻ Refresh</button>
+              </div>
+            </div>
+
+            <!-- FILTERS -->
+            <div class="graph-control-group">
+              <div class="control-group-title">FILTERS</div>
+              <input id="entitySearch" class="entity-search" placeholder="Search nodes &amp; edges…">
+              <div class="entity-filters">
+                <button class="entity-filter active" data-type="ALL">ALL</button>
+                <button class="entity-filter" data-type="Person">👤</button>
+                <button class="entity-filter" data-type="PhoneNumber">📞</button>
+                <button class="entity-filter" data-type="BankAccount">🏦</button>
+                <button class="entity-filter" data-type="Vehicle">🚗</button>
+                <button class="entity-filter" data-type="Location">📍</button>
+                <button class="entity-filter" data-type="Incident">🚨</button>
+              </div>
+              <div style="margin-top: 8px;">
+                <select id="graphRelTypeFilter" class="filter-select" style="width: 100%; font-size: 11px;">
+                  <option value="ALL">All Relationships</option>
+                  <option value="CALL_MADE_TO">Call Connections</option>
+                  <option value="TRANSFERRED_FUNDS_TO">Financial Transfers</option>
+                  <option value="SIGHTED_AT">Location Sightings</option>
+                  <option value="ASSOCIATED_WITH">General Associations</option>
+                  <option value="PART_OF_CASE">Case Backbones</option>
+                </select>
+              </div>
+              <div style="margin-top: 6px;">
+                <select id="graphRiskFilter" class="filter-select" style="width: 100%; font-size: 11px;">
+                  <option value="ALL">All Risk Levels</option>
+                  <option value="HIGH">High Risk (≥ 70)</option>
+                  <option value="MODERATE">Moderate Risk (40–69)</option>
+                  <option value="LOW">Low Risk (&lt; 40)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- DISPLAY TOGGLES -->
+            <div class="graph-control-group">
+              <div class="control-group-title">DISPLAY OPTIONS</div>
+              <label class="toggle-control-label">
+                <input type="checkbox" id="toggleNodeLabels" checked>
+                <span>Show Entity Labels</span>
+              </label>
+              <label class="toggle-control-label">
+                <input type="checkbox" id="toggleEdgeLabels" checked>
+                <span>Show Edge Labels</span>
+              </label>
+            </div>
+
+            <!-- EVIDENCE ENTITIES LIST -->
+            <div class="entity-header" style="margin-top: 8px;">
+              <b>CASE ENTITIES</b>
+              <span id="entityCount">0</span>
             </div>
             <div id="entityList" class="entity-list"></div>
           </aside>
+
+          <!-- Graph Canvas & Inspector -->
           <div class="graph-content">
-            <div class="graph-tools"><input id="graphSearch" placeholder="Search graph…"><span class="graph-hint">Click a node or relationship for details</span></div>
+            <div class="graph-tools">
+              <input id="graphSearch" placeholder="Filter graph nodes and edges…">
+              <span class="graph-hint">Click any entity node or relationship edge for forensic details</span>
+            </div>
             <div id="cy"></div>
-            <div id="entityInfo" class="entity-info"><div class="panel-title"><b>ENTITY INFORMATION</b><span>SELECT A NODE</span></div><p class="muted">Select an entity to inspect its identity and available connections.</p></div>
+            <div id="entityInfo" class="entity-info">
+              <div class="panel-title">
+                <b>INVESTIGATION INTELLIGENCE</b>
+                <span>SELECT NODE OR EDGE</span>
+              </div>
+              <p class="muted">Select any entity or connection to inspect verified signals, cryptographic provenance, and case links.</p>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="assistant" class="section hidden">
-        <div class="page-heading"><div><h2>Investigation Assistant</h2><p class="muted">Ask evidence-grounded questions about the current graph.</p></div><span class="mode-badge">LOCAL GRAPH + OPTIONAL LLM</span></div>
+      <!-- ============================================================ -->
+      <!-- SECTION 7: RISK ANALYSIS UI (#riskSection) -->
+      <!-- ============================================================ -->
+      <section id="riskSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Risk Analysis</h2>
+            <p class="muted">Deterministic, bounded 0–100 risk scoring with transparent factor breakdown and entity rankings.</p>
+          </div>
+          <div class="heading-actions">
+            <span class="active-case-tag" id="riskActiveCaseBadge">Operation Blue Lantern</span>
+            <button class="secondary" id="refreshRiskButton">↻ Recompute Risk</button>
+          </div>
+        </div>
+
+        <div class="risk-overview-grid">
+          <!-- Score Gauge Card -->
+          <div class="panel risk-gauge-panel">
+            <div class="panel-title">
+              <b>OVERALL CASE RISK</b>
+              <span id="riskAlgorithmBadge">DETERMINISTIC · WEIGHTED-SUM-V1</span>
+            </div>
+            <div class="risk-gauge-box">
+              <div class="risk-score-circle" id="riskScoreCircle">
+                <span class="risk-score-num" id="riskScoreNumber">—</span>
+                <small>/ 100</small>
+              </div>
+              <div class="risk-score-meta">
+                <div class="risk-band-tag" id="riskBandTag">UNSCORED</div>
+                <div class="risk-basis-text" id="riskBasisNote">Select a case to calculate case-scoped risk.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contributing Factors Card -->
+          <div class="panel risk-factors-panel">
+            <div class="panel-title">
+              <b>CASE CONTRIBUTING FACTORS</b>
+              <span>EXPLAINABLE INTELLIGENCE</span>
+            </div>
+            <div id="riskFactorsList" class="risk-factors-list">
+              <div class="muted">No contributing factors found for this case scope.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Entity Risk Table with Filters & Sorting -->
+        <div class="panel">
+          <div class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <b>ENTITY RISK ASSESSMENT &amp; CONTRIBUTING FACTORS</b>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="riskSortSelect" class="filter-select">
+                <option value="riskDesc">Sort: Risk Score (High → Low)</option>
+                <option value="riskAsc">Sort: Risk Score (Low → High)</option>
+                <option value="relsDesc">Sort: Relationship Count</option>
+                <option value="nameAsc">Sort: Entity Name</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Risk Filter Pills -->
+          <div class="filter-toolbar" style="padding: 12px 16px; border-bottom: 1px solid var(--line-subtle);">
+            <div class="filter-pills" id="riskLevelFilters">
+              <button class="pill active" data-risk="ALL">ALL RISK LEVELS</button>
+              <button class="pill danger-pill" data-risk="HIGH">HIGH RISK (≥ 70)</button>
+              <button class="pill warning-pill" data-risk="MEDIUM">MEDIUM RISK (40–69)</button>
+              <button class="pill success-pill" data-risk="LOW">LOW RISK (&lt; 40)</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="intel-table" id="riskEntitiesTable">
+              <thead>
+                <tr>
+                  <th>ENTITY</th>
+                  <th>TYPE</th>
+                  <th>RISK SCORE</th>
+                  <th>RISK LEVEL</th>
+                  <th>CONTRIBUTING FACTORS (REAL MEASURED WEIGHTS)</th>
+                  <th>RELATIONSHIPS</th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="riskEntitiesTableBody">
+                <tr><td colspan="7" class="muted text-center">Loading risk leaderboard…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- SECTION 8: INVESTIGATION ASSISTANT UI (#assistantSection) -->
+      <!-- ============================================================ -->
+      <section id="assistantSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Grounded Investigation Assistant</h2>
+            <p class="muted">Ask evidence-backed questions. Responses synthesize case documents, entity resolution, and topological relationships.</p>
+          </div>
+          <span class="mode-badge" id="assistantModeBadge">CASE EVIDENCE + PRETRAINED MODEL</span>
+        </div>
+
         <div class="panel assistant-panel">
+          <!-- Suggestion Chips -->
           <div class="suggestions">
-            <button data-question="Find entities connected to ACC1001">Account links</button>
-            <button data-question="Show communication links between phone numbers">Communication links</button>
-            <button data-question="Show the most connected entities">Top entities</button>
-            <button data-question="Show entities connected to the current incident">Incident links</button>
-            <button data-question="Who is connected to Rahul Mehta?">Rahul connections</button>
+            <button type="button" data-question="Summarize the core evidence in this case.">Summarize Case Evidence</button>
+            <button type="button" data-question="Find entities connected to the highest risk individual.">High Risk Links</button>
+            <button type="button" data-question="Show financial transaction links and money flows between accounts.">Financial Transfers</button>
+            <button type="button" data-question="Show communication links between phone numbers.">Communication Links</button>
+            <button type="button" data-question="What information or evidence is still missing from this case?">Identify Evidence Gaps</button>
           </div>
-          <div id="chatLog" class="chatlog"><div class="bot"><b>CrimeLens:</b><div class="assistant-answer">Ask a question about the current evidence graph. Answers are constrained to the evidence currently stored by the platform.</div></div></div>
-          <div class="chat-input"><input id="question" placeholder="Ask an investigative question…"><button class="primary" id="askButton">ANALYZE</button></div>
+
+          <!-- Chat Conversation Log -->
+          <div id="chatLog" class="chatlog">
+            <div class="bot">
+              <b>CrimeLens Assistant:</b>
+              <div class="assistant-answer">
+                Welcome to the CrimeLens Investigation Assistant. Ask factual questions about your active case. Answers are strictly grounded in ingested evidence files, entity resolution records, and topological graph connections.
+              </div>
+            </div>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="chat-input">
+            <input id="question" placeholder="Ask an investigative question about the active case…">
+            <button class="primary" id="askButton">ANALYZE EVIDENCE</button>
+          </div>
         </div>
       </section>
 
-      <section id="security" class="section hidden">
-        <div class="page-heading"><div><h2>Security Center</h2><p class="muted">Authentication, integrity, audit and security-event monitoring.</p></div><button class="secondary" id="refreshSecurityButton" data-permission="security:view">↻ Refresh security</button></div>
+      <!-- ============================================================ -->
+      <!-- SECTION 9: SECURITY CENTER UI (#securitySection) -->
+      <!-- ============================================================ -->
+      <section id="securitySection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Security Center</h2>
+            <p class="muted">Authentication posture, access control enforcement, evidence integrity, and cryptographic audit trail.</p>
+          </div>
+          <button class="secondary" id="refreshSecurityButton" data-permission="security:view">↻ Refresh Security</button>
+        </div>
+
+        <!-- Active Session & Access Control Card -->
+        <div class="panel session-posture-panel">
+          <div class="panel-title">
+            <b>AUTHENTICATED SESSION &amp; ACCESS CONTROL</b>
+            <span class="badge verified" id="sessionStatusBadge">ACTIVE SESSION</span>
+          </div>
+          <div class="session-posture-grid">
+            <div class="posture-item">
+              <span>CURRENT USER</span>
+              <b id="securityUsername">—</b>
+            </div>
+            <div class="posture-item">
+              <span>ASSIGNED ROLE</span>
+              <b id="securityUserRole" class="role-badge">—</b>
+            </div>
+            <div class="posture-item">
+              <span>SESSION INTEGRITY</span>
+              <b>HMAC-SHA256 SIGNED</b>
+            </div>
+            <div class="posture-item">
+              <span>CSRF DEFENSE</span>
+              <b>DOUBLE-SUBMIT TOKEN ENFORCED</b>
+            </div>
+            <div class="posture-item">
+              <span>PASSWORD HASH</span>
+              <b>SCRYPT (SALTED &amp; KEYED)</b>
+            </div>
+            <div class="posture-item">
+              <span>ACTIVE CASE SCOPE</span>
+              <b id="securityActiveCaseScope">Global / All Cases</b>
+            </div>
+          </div>
+          <div class="permissions-posture-box">
+            <span class="muted" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Authorized Role Permissions:</span>
+            <div id="securityPermissionsGrid" class="permissions-grid"></div>
+          </div>
+        </div>
+
         <div class="security-cards">
-          <div class="security-card"><span>AUTHENTICATION</span><b>HMAC SESSION</b><small>Signed HttpOnly session cookie</small></div>
-          <div class="security-card"><span>PASSWORDS</span><b>SCRYPT</b><small>Salted password hashing</small></div>
-          <div class="security-card"><span>EVIDENCE</span><b id="securityIntegrity">—</b><small>SHA-256 verification</small></div>
-          <div class="security-card"><span>LEDGER</span><b id="securityLedger">—</b><small>Tamper-evident chain</small></div>
+          <div class="security-card">
+            <span>EVIDENCE INTEGRITY</span>
+            <b id="securityIntegrity">—</b>
+            <small>SHA-256 fingerprint verification</small>
+          </div>
+          <div class="security-card">
+            <span>CRYPTOGRAPHIC LEDGER</span>
+            <b id="securityLedger">—</b>
+            <small>Immutable hash-linked chain</small>
+          </div>
+          <div class="security-card">
+            <span>SECURITY HEADERS</span>
+            <b style="color: var(--green);">SECURE (CSP / NOSNIFF / DENY)</b>
+            <small>Strict browser isolation enforced</small>
+          </div>
+          <div class="security-card">
+            <span>AUDIT TRAIL</span>
+            <b id="securityAuditCount">—</b>
+            <small>Tamper-evident system events</small>
+          </div>
         </div>
+
         <div class="grid2">
-          <div class="panel"><div class="panel-title"><b>SECURITY EVENTS</b><span>LAST 100</span></div><div id="securityEvents" class="table-wrap"></div></div>
-          <div class="panel"><div class="panel-title"><b>AUDIT TRAIL</b><span>LAST 100</span></div><div id="auditEvents" class="table-wrap"></div></div>
+          <div class="panel">
+            <div class="panel-title"><b>SECURITY EVENTS &amp; ACCESS ATTEMPTS</b><span>LAST 100</span></div>
+            <div id="securityEvents" class="table-wrap"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title"><b>IMMUTABLE AUDIT TRAIL</b><span>LAST 100</span></div>
+            <div id="auditEvents" class="table-wrap"></div>
+          </div>
         </div>
       </section>
 
-      <section id="ledger" class="section hidden">
-        <div class="page-heading"><div><h2>Evidence Integrity Ledger</h2><p class="muted">A local, permissioned-style hash chain for tamper-evident auditability.</p></div><button class="primary" id="verifyLedgerButton" data-permission="ledger:verify">VERIFY LEDGER</button></div>
+      <!-- ============================================================ -->
+      <!-- SECTION 10: EVIDENCE INTEGRITY LEDGER (#ledgerSection) -->
+      <!-- ============================================================ -->
+      <section id="ledgerSection" class="section hidden">
+        <div class="page-heading">
+          <div>
+            <h2>Evidence Ledger</h2>
+            <p class="muted">Tamper-evident cryptographic blockchain ledger recording evidence integrity, case lifecycle, and audit events.</p>
+          </div>
+          <div class="heading-actions">
+            <button class="primary" id="verifyLedgerButton" data-permission="ledger:verify">VERIFY LEDGER INTEGRITY</button>
+          </div>
+        </div>
+
         <div id="ledgerVerifyResult" class="verify-result hidden"></div>
-        <div class="ledger-explainer"><div class="chain-icon">⛓</div><div><b>How it works</b><span>Each audit event becomes a block containing its payload, the previous block hash and a new SHA-256 block hash. This prototype demonstrates blockchain concepts without pretending to be a distributed public blockchain.</span></div></div>
-        <div class="panel"><div class="panel-title"><b>HASH-CHAIN BLOCKS</b><span id="ledgerCount">0 BLOCKS</span></div><div id="ledgerList" class="ledger-list"></div></div>
+
+        <div class="ledger-explainer">
+          <div class="chain-icon">⛓</div>
+          <div>
+            <b>Cryptographic Chain-of-Custody (SHA-256 Hash Chain)</b>
+            <span>Each block contains its event type, canonical JSON payload, the previous block's SHA-256 hash, and a new cryptographic block hash. This guarantees non-repudiation and immediate detection of any unauthorized database modification.</span>
+          </div>
+        </div>
+
+        <!-- Ledger Filter Bar -->
+        <div class="filter-toolbar">
+          <input type="text" id="ledgerSearchInput" class="filter-input" placeholder="Search by block #, event type, hash, or payload…">
+          <select id="ledgerActionFilter" class="filter-select">
+            <option value="ALL">All Event Types</option>
+            <option value="EVIDENCE_INGESTED">Evidence Ingestion</option>
+            <option value="EVIDENCE_DELETED">Evidence Deletion</option>
+            <option value="CASE_CREATED">Case Creation</option>
+            <option value="CASE_DELETED">Case Deletion</option>
+            <option value="SECURITY_EVENT">Security Event</option>
+            <option value="LEDGER_VERIFICATION">Ledger Verification</option>
+          </select>
+          <button type="button" class="secondary" id="refreshLedgerBtn">↻ Refresh</button>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">
+            <b>HASH-CHAIN BLOCKS</b>
+            <span id="ledgerCount">0 BLOCKS</span>
+          </div>
+          <div id="ledgerList" class="ledger-list"></div>
+        </div>
       </section>
     </main>
   </div>
 
+  <!-- ============================================================ -->
+  <!-- MODALS -->
+  <!-- ============================================================ -->
+
+  <!-- Quick Case Switcher Modal -->
+  <div id="caseSwitcherModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h3>Select Active Investigation Case</h3>
+          <p class="muted">Switch active context to isolate evidence, entities, graph, and assistant queries.</p>
+        </div>
+        <button class="icon-button" id="closeCaseSwitcherButton">×</button>
+      </div>
+      <div class="case-switcher-list" id="caseSwitcherModalList">
+        <div class="muted">Loading cases…</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="clearCaseSelectionModalBtn">Clear Case (Global View)</button>
+        <button type="button" class="primary" id="createNewCaseFromSwitcherBtn">＋ Create New Case</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create New Case Modal -->
   <div id="newCaseModal" class="modal hidden">
     <div class="modal-card">
-      <div class="modal-head"><div><h3>Create New Case</h3><p class="muted">Create a case workspace for authorized investigation.</p></div><button class="icon-button" id="closeNewCaseButton">×</button></div>
-      <form id="newCaseForm">
-        <label>Case name<input id="newCaseName" required maxlength="255" placeholder="e.g. Operation North Star"></label>
-        <label>Reference ID<input id="newCaseId" maxlength="120" placeholder="e.g. CL-002"></label>
-        <div class="form-grid">
-          <label>Risk<select id="newCaseRisk"><option>Low</option><option selected>Medium</option><option>High</option></select></label>
-          <label>Status<select id="newCaseStatus"><option selected>Pending</option><option>Open</option><option>Solved</option><option>Closed</option></select></label>
+      <div class="modal-head">
+        <div>
+          <h3>Create New Case Workspace</h3>
+          <p class="muted">Establish a secure investigation workspace with dedicated case isolation.</p>
         </div>
-        <label>Description<textarea id="newCaseDescription" rows="4" maxlength="5000" placeholder="Brief case description"></textarea></label>
+        <button class="icon-button" id="closeNewCaseButton">×</button>
+      </div>
+      <form id="newCaseForm">
+        <label>Case Title
+          <input id="newCaseName" required maxlength="255" placeholder="e.g. Operation Blue Lantern">
+        </label>
+        <label>Reference Identifier (Stable Case Code)
+          <input id="newCaseId" maxlength="120" placeholder="e.g. CL-2026-009">
+        </label>
+        <div class="form-grid">
+          <label>Declared Risk Rating
+            <select id="newCaseRisk">
+              <option>Low</option>
+              <option selected>Medium</option>
+              <option>High</option>
+            </select>
+          </label>
+          <label>Investigation Status
+            <select id="newCaseStatus">
+              <option selected>Pending</option>
+              <option>Open</option>
+              <option>Solved</option>
+              <option>Closed</option>
+            </select>
+          </label>
+        </div>
+        <label>Case Narrative / Description
+          <textarea id="newCaseDescription" rows="4" maxlength="5000" placeholder="Summary of the alleged crime, initial report details, and primary objectives."></textarea>
+        </label>
         <div id="newCaseError" class="form-error"></div>
-        <div class="modal-actions"><button type="button" class="secondary" id="cancelNewCaseButton">Cancel</button><button type="submit" class="primary">CREATE CASE</button></div>
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="cancelNewCaseButton">Cancel</button>
+          <button type="submit" class="primary">CREATE CASE WORKSPACE</button>
+        </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Remove Case Modal (Must retain exact IDs for tests) -->
+  <div id="deleteCaseModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 style="color:#ef4444;">Remove Case?</h3>
+          <p class="muted">This will remove the case and its associated investigation data.</p>
+        </div>
+        <button class="icon-button" id="closeDeleteCaseButton">×</button>
+      </div>
+      <div class="delete-modal-body">
+        <p>Are you sure you want to remove <b id="deleteCaseModalTitle">—</b> (<span id="deleteCaseModalRef">—</span>)?</p>
+        <p class="delete-modal-warning">This action will remove all case-scoped documents, integrity records, graph relationships, and vector index records. The tamper-evident blockchain audit ledger will record this deletion.</p>
+      </div>
+      <div id="deleteCaseError" class="form-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="cancelDeleteCaseButton">Cancel</button>
+        <button type="button" class="danger-btn" id="confirmDeleteCaseButton">REMOVE CASE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Entity Forensic Dossier Drawer/Modal -->
+  <div id="entityDossierModal" class="modal hidden">
+    <div class="modal-card dossier-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 id="dossierEntityName">Entity Intelligence Profile</h3>
+          <p class="muted" id="dossierEntitySubtitle">Forensic dossier with multi-signal resolution details</p>
+        </div>
+        <button class="icon-button" id="closeEntityDossierButton">×</button>
+      </div>
+      <div class="dossier-modal-content" id="dossierEntityBody">
+        <div class="loading-box">Loading entity signals…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- View Evidence Document Modal -->
+  <div id="evidenceViewModal" class="modal hidden">
+    <div class="modal-card dossier-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 id="evidenceViewFilename">Evidence Artifact Inspection</h3>
+          <p class="muted" id="evidenceViewMeta">Forensic metadata and extracted content</p>
+        </div>
+        <button class="icon-button" id="closeEvidenceViewModalBtn">×</button>
+      </div>
+      <div class="dossier-modal-content" id="evidenceViewBody">
+        <div class="loading-box">Loading evidence details…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Evidence Document Modal -->
+  <div id="deleteEvidenceModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 style="color:#ef4444;">Remove Evidence Artifact?</h3>
+          <p class="muted">Permanently remove evidence document and related embeddings.</p>
+        </div>
+        <button class="icon-button" id="closeDeleteEvidenceModalBtn">×</button>
+      </div>
+      <div class="delete-modal-body">
+        <p>Are you sure you want to remove evidence <b id="deleteEvidenceModalFilename">—</b>?</p>
+        <p class="delete-modal-warning">This will delete the stored artifact file, its SHA-256 integrity record, and its vector embeddings. An immutable deletion record will be committed to the cryptographic ledger.</p>
+      </div>
+      <div id="deleteEvidenceError" class="form-error"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="cancelDeleteEvidenceBtn">Cancel</button>
+        <button type="button" class="danger-btn" id="confirmDeleteEvidenceBtn">REMOVE EVIDENCE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inspect Ledger Block Payload Modal -->
+  <div id="ledgerPayloadModal" class="modal hidden">
+    <div class="modal-card dossier-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 id="ledgerPayloadTitle">Ledger Block Payload</h3>
+          <p class="muted" id="ledgerPayloadSubtitle">Canonical cryptographic event record</p>
+        </div>
+        <button class="icon-button" id="closeLedgerPayloadModalBtn">×</button>
+      </div>
+      <div class="dossier-modal-content">
+        <pre id="ledgerPayloadJson" style="background: var(--bg-canvas); padding: 16px; border-radius: 6px; font-size: 11px; overflow-x: auto; color: var(--gold); max-height: 400px;"></pre>
+      </div>
     </div>
   </div>
 

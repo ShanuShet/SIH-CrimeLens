@@ -35,6 +35,50 @@ class Entity(Base):
         nullable=True
     )
 
+    case_id = Column(
+        Integer,
+        nullable=True,
+        index=True
+    )
+
+    phone = Column(
+        String(50),
+        nullable=True
+    )
+
+    email = Column(
+        String(120),
+        nullable=True
+    )
+
+    account = Column(
+        String(100),
+        nullable=True
+    )
+
+    vehicle = Column(
+        String(100),
+        nullable=True
+    )
+
+    identifier = Column(
+        String(100),
+        nullable=True
+    )
+
+    resolution_status = Column(
+        String(50),
+        nullable=True,
+        default="NEW_ENTITY"
+    )
+
+    match_reason = Column(
+        String(255),
+        nullable=True,
+        default=""
+    )
+
+
 
 class Relationship(Base):
     __tablename__ = "relationships"
@@ -232,3 +276,17 @@ class SecurityEvent(Base):
     detail = Column(Text, default="")
     ip_address = Column(String(100), default="unknown")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True)
+    case_id = Column(Integer, nullable=False, index=True)
+    document_id = Column(Integer, nullable=False, index=True)
+    chunk_index = Column(Integer, default=0)
+    chunk_text = Column(Text, nullable=False)
+    embedding_json = Column(Text, nullable=True)
+    provenance_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
