@@ -223,6 +223,78 @@ def ensure_demo_users():
 ensure_default_case()
 ensure_demo_users()
 
+def seed_demo_evidence():
+    """
+    Register committed demo evidence files in CL-001.
+
+    The files already exist in the uploads/ directory.
+    This creates the database Document records needed by
+    the Evidence Locker.
+    """
+    db = SessionLocal()
+
+    try:
+        case = (
+            db.query(Case)
+            .filter(Case.reference_id == "CL-001")
+            .first()
+        )
+
+        if not case:
+            return
+
+        demo_files = [
+            "01_FIR_Police_Report.pdf",
+            "03_Surveillance_Report.docx",
+            "04_Criminal_Record.xlsx",
+            "05_Call_Detail_Record.csv",
+            "06_Financial_Transaction_Log.csv",
+            "07_Other_Evidence.json",
+            "08_Entity_Master.xlsx",
+            "09_Witness_Statement.txt",
+        ]
+
+        for filename in demo_files:
+            path = UPLOADS / filename
+
+            if not path.is_file():
+                continue
+
+            existing = (
+                db.query(Document)
+                .filter(
+                    Document.case_id == case.id,
+                    Document.filename == filename,
+                )
+                .first()
+            )
+
+            if existing:
+                continue
+
+            suffix = path.suffix.lower()
+
+            document = Document(
+                case_id=case.id,
+                filename=filename,
+                doc_type="DEMO_EVIDENCE",
+                data_category="INVESTIGATION",
+                file_extension=suffix,
+                file_size=path.stat().st_size,
+                extraction_method="PRELOADED",
+                content="Synthetic demonstration evidence.",
+                status="READY",
+            )
+
+            db.add(document)
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
+seed_demo_evidence()
 
 def backfill_evidence_integrity():
     """Fingerprint legacy evidence already present in the prototype database."""
