@@ -872,7 +872,14 @@ async def login(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid login request")
     username = str(body.get("username", "")).strip().lower()
     password = str(body.get("password", ""))
-    user = db.query(User).filter(User.username == username, User.active == 1).first()
+    user = (
+        db.query(User)
+        .filter(
+            User.username == username,
+            User.active.is_(True),
+        )
+        .first()
+    )
     if not user or not verify_password(password, user.password_hash):
         record_login_failure(ip, username)
         raise HTTPException(status_code=401, detail="Invalid username or password")
