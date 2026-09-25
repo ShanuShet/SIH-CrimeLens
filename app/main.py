@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from threading import Lock
 from uuid import uuid4
+import tempfile
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
