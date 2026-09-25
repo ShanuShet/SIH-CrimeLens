@@ -214,7 +214,7 @@ def ensure_demo_users():
         ]
         for username, password, role in defaults:
             if not db.query(User).filter(User.username == username).first():
-                db.add(User(username=username, password_hash=hash_password(password), role=role, active=1))
+                db.add(User(username=username, password_hash=hash_password(password), role=role, active=True))
         db.commit()
     finally:
         db.close()
