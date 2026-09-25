@@ -225,11 +225,8 @@ ensure_demo_users()
 
 def seed_demo_evidence():
     """
-    Register committed demo evidence files in CL-001.
-
-    The files already exist in the uploads/ directory.
-    This creates the database Document records needed by
-    the Evidence Locker.
+    Preload the synthetic MVP evidence into CL-001 and run the
+    same extraction/graph pipeline used by normal evidence ingestion.
     """
     db = SessionLocal()
 
@@ -260,6 +257,7 @@ def seed_demo_evidence():
             if not path.is_file():
                 continue
 
+            # Already processed
             existing = (
                 db.query(Document)
                 .filter(
@@ -273,26 +271,156 @@ def seed_demo_evidence():
                 continue
 
             suffix = path.suffix.lower()
+            category = classify_extension(filename)
 
-            document = Document(
+            chosen_type = "STRUCTURED" if category == "STRUCTURED" else "OTHER"
+
+            # ---------------------------------------------
+            # Parse evidence
+            # ---------------------------------------------
+            if category == "STRUCTURED":
+                (
+                    entities,
+                    relationships,
+                    metadata,
+                ) = parse_structured(
+                    str(path),
+                    chosen_type,
+                    filename,
+                )
+
+                content = json.dumps(
+                    metadata,
+                    ensure_ascii=False,
+                    default=str,
+                )
+
+                structured_preview = json.dumps(
+                    metadata.get("preview", []),
+                    ensure_ascii=False,
+                    default=str,
+                )
+
+                extraction_method = (
+                    "STRUCTURED_PARSER:"
+                    + str(
+                        metadata.get(
+                            "detected_type",
+                            chosen_type,
+                        )
+                    )
+                )
+
+            else:
+                content, extraction_method = read_document(
+                    str(path)
+                )
+
+                metadata = {
+                    "characters": len(content),
+                    "detected_type": chosen_type,
+                }
+
+                structured_preview = ""
+
+                known_entities = [
+                    {
+                        "key": entity.key,
+                        "label": entity.label,
+                        "name": entity.name,
+                    }
+                    for entity in get_entities(
+                        db,
+                        case_id=case.id,
+                    )
+                ]
+
+                entities = extract_entities(
+                    content,
+                    known_entities,
+                )
+
+                relationships = extract_relationships(
+                    content,
+                    known_entities,
+                )
+
+            # ---------------------------------------------
+            # Connect extracted data to this case
+            # ---------------------------------------------
+            case_reference = (
+                case.reference_id
+                or f"CL-{case.id:03d}"
+            )
+
+            create_case_backbone(
+                case_reference,
+                case.title,
+                entities,
+                relationships,
+            )
+
+            # ---------------------------------------------
+            # Save entities + relationships
+            # ---------------------------------------------
+            upsert_graph(
+                db,
+                entities,
+                relationships,
                 case_id=case.id,
+            )
+
+            # ---------------------------------------------
+            # Save document
+            # ---------------------------------------------
+            document = Document(
                 filename=filename,
-                doc_type="DEMO_EVIDENCE",
-                data_category="INVESTIGATION",
+                case_id=case.id,
+                doc_type=chosen_type,
+                data_category=category,
                 file_extension=suffix,
                 file_size=path.stat().st_size,
-                extraction_method="PRELOADED",
-                content="Synthetic demonstration evidence.",
-                status="READY",
+                extraction_method=extraction_method,
+                content=content[:100000],
+                structured_preview=structured_preview[:50000],
+                status="INGESTED",
             )
 
             db.add(document)
+            db.flush()
+
+            # ---------------------------------------------
+            # Evidence integrity
+            # ---------------------------------------------
+            db.add(
+                EvidenceIntegrity(
+                    document_id=document.id,
+                    sha256=sha256_file(path),
+                    file_size=path.stat().st_size,
+                    stored_path=str(path),
+                    status="VERIFIED",
+                )
+            )
+
+            db.commit()
+
+        # Recalculate stored entity risk after all evidence
+        refresh_stored_entity_risk(
+            db,
+            [case.id],
+        )
 
         db.commit()
 
+    except Exception as exc:
+        db.rollback()
+        print(
+            "Demo evidence seeding failed:",
+            exc,
+        )
+
     finally:
         db.close()
-
 
 seed_demo_evidence()
 
