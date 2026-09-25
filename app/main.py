@@ -147,50 +147,62 @@ def ensure_default_case():
     db = SessionLocal()
 
     try:
-        case = (
-            db.query(Case)
-            .filter(Case.reference_id == "CL-001")
-            .first()
-        )
-
-        if not case:
-
-            # Adopt a case that predates reference IDs instead of creating a
-            # duplicate default case in the case selector.
-            legacy_case = next(
-                (
-                    item
-                    for item in db.query(Case)
-                    .order_by(Case.id.asc())
-                    .all()
-                    if not (item.reference_id or "").strip()
+        demo_cases = [
+            {
+                "reference_id": "CL-001",
+                "title": "Operation Blue Lantern",
+                "status": "Pending",
+                "risk": "Medium",
+                "description": (
+                    "Synthetic investigation case for CrimeLens "
+                    "evidence analysis."
                 ),
-                None,
+            },
+            {
+                "reference_id": "CL-002",
+                "title": "Warehouse Investigation",
+                "status": "Pending",
+                "risk": "Low",
+                "description": (
+                    "Synthetic warehouse investigation for MVP "
+                    "demonstration."
+                ),
+            },
+            {
+                "reference_id": "CL-003",
+                "title": "Financial Network Investigation",
+                "status": "Pending",
+                "risk": "High",
+                "description": (
+                    "Synthetic financial network investigation for "
+                    "MVP demonstration."
+                ),
+            },
+        ]
+
+        for case_data in demo_cases:
+            existing = (
+                db.query(Case)
+                .filter(
+                    Case.reference_id
+                    == case_data["reference_id"]
+                )
+                .first()
             )
 
-            if legacy_case:
-                legacy_case.reference_id = "CL-001"
-                db.commit()
-            else:
-                case = Case(
-                    reference_id="CL-001",
-                    title="Operation Blue Lantern",
-                    status="Pending",
-                    risk="Medium",
-                    description=(
-                        "Synthetic investigation case for "
-                        "CrimeLens evidence analysis."
-                    ),
+            if not existing:
+                db.add(
+                    Case(**case_data)
                 )
 
-                db.add(case)
-                db.commit()
+        db.commit()
 
+        # Give any older cases that don't have a reference ID
+        # a stable legacy reference.
         backfill_case_references(db)
 
     finally:
         db.close()
-
 
 def ensure_demo_users():
     db = SessionLocal()
